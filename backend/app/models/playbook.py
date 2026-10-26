@@ -15,7 +15,12 @@ class Playbook(Base):
     category = Column(String(100), nullable=False, default="General")
     description = Column(Text, nullable=False)
     severity = Column(String(20), nullable=False, default="HIGH")
-    steps = Column(JSON, nullable=False, default=list)  # list of {desc: str, cmd: str, estimated_seconds: int}
+    risk_level = Column(String(20), nullable=False, default="HIGH")  # LOW, MEDIUM, HIGH, CRITICAL
+    operational_impact = Column(String(100), nullable=False, default="Moderate")  # Minimal, Low, Moderate, High, Severe
+    required_permissions = Column(JSON, nullable=False, default=list)  # e.g. ["SOC Analyst", "Incident Responder"]
+    preconditions = Column(JSON, nullable=False, default=list)  # prerequisites required before execution
+    incident_types = Column(JSON, nullable=False, default=list)  # matching incident categories/tags
+    steps = Column(JSON, nullable=False, default=list)  # list of {desc: str, cmd: str, estimated_seconds: int, ...}
     enabled = Column(Boolean, default=True, nullable=False)
     created_at = Column(DateTime(timezone=True), default=lambda: datetime.now(timezone.utc), nullable=False)
 

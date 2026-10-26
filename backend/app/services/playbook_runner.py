@@ -77,12 +77,14 @@ async def run_playbook_simulation(
     for idx, step in enumerate(steps_to_run, start=1):
         step_desc = step.get("desc", f"Defensive Step {idx}")
         step_cmd = step.get("cmd", "echo [SIMULATION]")
+        action_type = step.get("action_type", "containment")
         
         # Synthetic simulation output
         step_result = {
             "step_index": idx,
             "description": step_desc,
             "command": step_cmd,
+            "action_type": action_type,
             "status": "SIMULATED_SUCCESS",
             "exit_code": 0,
             "output": f"[SIMULATION] Verification check passed: Action safely simulated against sandbox target.",
@@ -92,7 +94,7 @@ async def run_playbook_simulation(
 
     execution.steps_results = step_results
     execution.status = "COMPLETED"
-    execution.output_summary = f"Successfully completed all {len(step_results)} simulated containment actions for {incident.public_id}."
+    execution.output_summary = f"Successfully completed all {len(step_results)} simulated containment actions for {incident.public_id} under human analyst authorization."
     execution.completed_at = datetime.now(timezone.utc)
 
     # Transition Incident Status if appropriate
@@ -124,7 +126,7 @@ async def run_playbook_simulation(
         user_name=requested_by,
         detail=f"Simulated containment playbook '{playbook_name}' completed. Incident status changed: {old_status} → CONTAINED",
         old_value={"status": old_status},
-        new_value={"status": "CONTAINED", "execution_mode": "SIMULATION"},
+        new_value={"status": "CONTAINED", "execution_mode": "SIMULATION", "playbook_id": playbook_id},
         severity="info",
         ip_address=client_ip,
     )
@@ -153,3 +155,91 @@ async def run_playbook_simulation(
     })
 
     return execution
+
+
+def recommend_playbooks_for_incident(db: Session, incident: Incident) -> List[Dict[str, Any]]:
+    """
+    Ranks and recommends defensive containment playbooks for a specific incident.
+    Evaluates incident category, title, description, threat type, MITRE techniques, and severity.
+    Returns ranked list of recommendations with score, primary flag, and explanation.
+    """
+    playbooks = db.query(Playbook).filter(Playbook.enabled == True).all()
+    if not playbooks:
+        return []
+
+    inc_text = f"{incident.title or ''} {incident.description or ''} {incident.category or ''}".lower()
+    inc_tags = [t.lower() for t in (incident.tags or [])]
+    inc_category = (incident.category or "").lower()
+    inc_severity = (incident.severity or "HIGH").upper()
+
+    scored = []
+    keywords = {
+        "ransomware": ["ransomware", "encrypt", "lockbit", "shadow copy", "wiper"],
+        "sqli": ["sql", "injection", "sqli", "database", "union select"],
+        "bruteforce": ["brute", "spray", "credential", "failed login", "password"],
+        "phishing": ["phish", "email", "attachment", "mailbox", "spear"],
+        "powershell": ["powershell", "encoded", "script", "amsi", "ps1"],
+        "c2": ["c2", "beacon", "command and control", "cobalt", "dns tunnel"],
+        "exfiltration": ["exfiltration", "leak", "egress", "upload", "dlp"],
+        "ddos": ["ddos", "flood", "syn flood", "amplification", "denial"],
+        "geo": ["geo", "impossible travel", "location", "foreign", "unusual geo"],
+        "cloud": ["cloud", "aws", "s3", "ec2", "azure", "iam key"],
+        "privilege": ["privilege", "escalation", "uac", "token", "root", "admin"],
+        "lateral": ["lateral", "pass-the-hash", "kerberos", "psexec", "mimikatz", "smb"],
+        "config": ["config", "tamper", "file integrity", "fim", "unauthorized change"],
+        "api": ["api", "token", "endpoint", "idor", "bola", "gateway"],
+        "login": ["login", "authentication", "session", "mfa", "auth anomaly"],
+    }
+
+    for pb in playbooks:
+        score = 0.0
+        match_reasons = []
+
+        # 1. Match incident_types
+        types = [t.lower() for t in (pb.incident_types or [])]
+        for it in types:
+            if it in inc_text or any(it in tag for tag in inc_tags):
+                score += 50.0
+                match_reasons.append(f"Direct threat signature match: '{it}'")
+                break
+
+        # 2. Match Category
+        pb_cat = (pb.category or "").lower()
+        if inc_category and (inc_category in pb_cat or pb_cat in inc_category):
+            score += 30.0
+            match_reasons.append(f"Domain category alignment ({pb.category})")
+
+        # 3. Keyword heuristic match in name / description
+        pb_name = pb.name.lower()
+        for kw_group, words in keywords.items():
+            if any(w in pb_name for w in words):
+                matched_words = [w for w in words if w in inc_text or any(w in tag for tag in inc_tags)]
+                if matched_words:
+                    score += 25.0
+                    match_reasons.append(f"Telemetry indicator matches '{matched_words[0]}'")
+                    break
+
+        # 4. Severity alignment
+        if pb.severity == inc_severity:
+            score += 10.0
+
+        if not match_reasons:
+            match_reasons.append("Standard defensive containment protocol")
+            score += 5.0
+
+        scored.append({
+            "playbook": pb,
+            "score": round(score, 1),
+            "match_reason": " | ".join(match_reasons),
+            "is_primary": False,
+        })
+
+    # Sort descending by score
+    scored.sort(key=lambda x: x["score"], reverse=True)
+
+    # Mark top 1 as primary
+    if scored:
+        scored[0]["is_primary"] = True
+
+    return scored
+

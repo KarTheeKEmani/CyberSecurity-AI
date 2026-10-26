@@ -179,6 +179,8 @@ const chatbotApi = {
   listConversations: () => ApiClient.request('/chatbot/conversations'),
   getMessages: (convId) => ApiClient.request(`/chatbot/conversations/${convId}/messages`),
   deleteConversation: (convId) => ApiClient.request(`/chatbot/conversations/${convId}`, { method: 'DELETE' }),
+  getSuggestions: (incidentId = null) =>
+    ApiClient.request(`/chatbot/suggestions${incidentId ? `?incident_id=${incidentId}` : ''}`),
 };
 
 // NEW: Mock Alert Generator API

@@ -39,6 +39,10 @@ def _sanitize_input(text: str) -> str:
     return sanitized.strip()
 
 
+from app.models.playbook import Playbook, PlaybookExecution
+from sqlalchemy import or_
+
+
 def _build_incident_context(db: Session, incident_id: Optional[int], user: User) -> str:
     """Retrieve verified incident data from database to provide as grounded context."""
     if not incident_id:
@@ -49,13 +53,26 @@ def _build_incident_context(db: Session, incident_id: Optional[int], user: User)
         return ""
 
     ctx_parts = [
-        f"INCIDENT {incident.public_id}: {incident.title}",
-        f"Severity: {incident.severity} | Status: {incident.status}",
+        f"INCIDENT_RECORD: {incident.public_id}",
+        f"Title: {incident.title}",
+        f"Severity: {incident.severity} | Status: {incident.status} | Risk Score: {incident.risk_score}",
         f"Category: {incident.category} | Source: {incident.source}",
-        f"Source IP: {incident.source_ip} | Target: {incident.target_system}",
-        f"Detected at: {incident.detected_at.isoformat() if incident.detected_at else 'unknown'}",
-        f"Description: {incident.description[:500] if incident.description else 'N/A'}",
+        f"Source IP: {incident.source_ip or 'N/A'} | Target System: {incident.target_system or 'N/A'} | Destination IP: {incident.destination_ip or 'N/A'}",
+        f"Detected At: {incident.detected_at.isoformat() if incident.detected_at else 'unknown'}",
+        f"Assignee: {incident.assignee or 'Unassigned'}",
+        f"Description: {incident.description if incident.description else 'N/A'}",
     ]
+
+    # Telemetry Raw Logs (observed facts)
+    if incident.raw_logs and isinstance(incident.raw_logs, list):
+        log_lines = []
+        for l in incident.raw_logs[:6]:
+            if isinstance(l, dict):
+                log_lines.append(f"[{l.get('time', 'time')}] {l.get('level', 'INFO')}: {l.get('msg', '')} — {l.get('detail', '')}")
+            else:
+                log_lines.append(str(l))
+        if log_lines:
+            ctx_parts.append("Observed Telemetry Logs:\n" + "\n".join(log_lines))
 
     # IOCs (verified facts)
     iocs = db.query(IOC).filter(IOC.incident_id == incident.id).all()
@@ -66,7 +83,7 @@ def _build_incident_context(db: Session, incident_id: Optional[int], user: User)
     # MITRE techniques
     mitre = db.query(MitreTechnique).filter(MitreTechnique.incident_id == incident.id).all()
     if mitre:
-        mitre_list = ", ".join(f"{m.technique_id} ({m.tactic})" for m in mitre[:8])
+        mitre_list = ", ".join(f"{m.technique_id} ({m.technique_name} - {m.tactic})" for m in mitre[:8])
         ctx_parts.append(f"MITRE Techniques: {mitre_list}")
 
     # Latest AI analysis
@@ -75,11 +92,55 @@ def _build_incident_context(db: Session, incident_id: Optional[int], user: User)
     ).order_by(AIAnalysis.created_at.desc()).first()
     if ai_analysis:
         ctx_parts.append(
-            f"AI Analysis (is_mock={ai_analysis.provider == 'mock'}): "
-            f"Classification={ai_analysis.classification}, "
-            f"Confidence={ai_analysis.confidence}%, "
-            f"RootCause={ai_analysis.root_cause[:300]}"
+            f"AI Triage Findings: Classification={ai_analysis.classification}, "
+            f"Confidence={ai_analysis.confidence}%, ThreatType={ai_analysis.threat_type}, "
+            f"RootCause={ai_analysis.root_cause}"
         )
+
+    # Compatible Playbooks
+    pbs = db.query(Playbook).filter(
+        Playbook.enabled == True,
+        or_(
+            Playbook.category.ilike(f"%{incident.category}%"),
+            Playbook.severity == incident.severity,
+        )
+    ).limit(3).all()
+    if not pbs:
+        pbs = db.query(Playbook).filter(Playbook.enabled == True).limit(2).all()
+    if pbs:
+        pb_info = []
+        for p in pbs:
+            step_descs = "; ".join([s.get("desc", "") for s in (p.steps or [])[:4]])
+            pb_info.append(f"Playbook '{p.name}' [Severity: {p.severity}, Category: {p.category}]: {p.description}. Steps: {step_descs}")
+        ctx_parts.append("Available Defensive Playbooks:\n" + "\n".join(pb_info))
+
+    # Associated Playbook Executions (if already run)
+    executions = db.query(PlaybookExecution).filter(
+        PlaybookExecution.incident_id == incident.id
+    ).order_by(PlaybookExecution.started_at.desc()).limit(3).all()
+    if executions:
+        exec_info = []
+        for e in executions:
+            exec_info.append(f"Execution #{e.id} by {e.requested_by}: status={e.status}, mode={e.execution_mode}, summary={e.output_summary or 'Completed'}")
+        ctx_parts.append("Playbook Execution History on Incident:\n" + "\n".join(exec_info))
+
+    # Correlated / Related incidents
+    filters = []
+    if incident.source_ip and incident.source_ip not in ("Unknown", "None", ""):
+        filters.append(Incident.source_ip == incident.source_ip)
+    if incident.target_system and incident.target_system not in ("Unknown", "None", ""):
+        filters.append(Incident.target_system == incident.target_system)
+    if incident.category:
+        filters.append(Incident.category == incident.category)
+
+    if filters:
+        related = db.query(Incident).filter(
+            Incident.id != incident.id,
+            or_(*filters)
+        ).order_by(Incident.created_at.desc()).limit(4).all()
+        if related:
+            rel_info = [f"- {r.public_id}: {r.title} [{r.severity}/{r.status}] (target: {r.target_system}, IP: {r.source_ip})" for r in related]
+            ctx_parts.append("Correlated Incidents:\n" + "\n".join(rel_info))
 
     return "\n".join(ctx_parts)
 

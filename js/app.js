@@ -1011,6 +1011,56 @@ function renderDrawerBody(inc) {
           ${rawLogsHtml || '<div style="color:var(--text-dim);font-size:12px;">No logs recorded.</div>'}
         </div>
       </div>
+
+      <!-- SOC Threat Assistant Section (Integrated near bottom of threat interface) -->
+      <div class="drawer-assistant-card glass-card" style="margin-bottom:24px;padding:20px;border:1px solid rgba(92,200,255,0.25);border-radius:var(--radius-lg);background:rgba(8,12,18,0.85);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <div class="status-dot live" style="width:7px;height:7px;background:var(--accent);"></div>
+            <span style="font-size:13.5px;font-weight:600;color:var(--text-primary);">AI Threat Assistant</span>
+            <span style="font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(92,200,255,0.12);color:var(--accent);font-family:var(--font-mono);">CONTEXT: ${escapeHtml(inc.public_id)}</span>
+          </div>
+          <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:3px 10px;" onclick="openIncidentInChatbot(${inc.id}, '${escapeHtml(inc.public_id)}')">
+            Expand Full Session ↗
+          </button>
+        </div>
+
+        <div style="font-size:11px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;">
+          Contextual Threat Inquiries
+        </div>
+        <div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:14px;">
+          <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;" onclick="askDrawerAssistant(${inc.id}, 'Why was this incident flagged?')">
+            ✦ Why was this flagged?
+          </button>
+          <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;" onclick="askDrawerAssistant(${inc.id}, 'What evidence supports this classification?')">
+            ✦ What evidence supports this?
+          </button>
+          <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;" onclick="askDrawerAssistant(${inc.id}, 'Which playbook is appropriate?')">
+            ✦ Which playbook is appropriate?
+          </button>
+          <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;" onclick="askDrawerAssistant(${inc.id}, 'Show related incidents.')">
+            ✦ Show related incidents
+          </button>
+          <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;" onclick="askDrawerAssistant(${inc.id}, 'What should I investigate next?')">
+            ✦ What should I investigate next?
+          </button>
+        </div>
+
+        <!-- Inline Drawer Chat Messages -->
+        <div id="drawer-chat-feed-${inc.id}" style="max-height:240px;overflow-y:auto;display:flex;flex-direction:column;gap:10px;padding:12px;background:#03060A;border:1px solid var(--glass-border);border-radius:var(--radius-md);margin-bottom:12px;">
+          <div style="font-size:12px;color:var(--text-muted);line-height:1.5;">
+            Ready to analyze <strong>${escapeHtml(inc.public_id)}</strong>. Click any inquiry above or ask a specific question below.
+          </div>
+        </div>
+
+        <!-- Inline Drawer Chat Input -->
+        <div style="display:flex;gap:8px;">
+          <input type="text" id="drawer-chat-input-${inc.id}" class="form-input" style="font-size:12.5px;padding:8px 12px;height:38px;" placeholder="Ask SOC Assistant about ${escapeHtml(inc.public_id)}..." onkeydown="if(event.key==='Enter') submitDrawerAssistantMessage(${inc.id})">
+          <button class="btn btn-primary btn-sm" id="drawer-chat-send-${inc.id}" onclick="submitDrawerAssistantMessage(${inc.id})" style="height:38px;padding:0 14px;flex-shrink:0;">
+            Ask AI
+          </button>
+        </div>
+      </div>
     </div>
   `;
 }
@@ -1593,18 +1643,23 @@ function renderChatbot() {
         </div>
 
         <div class="chat-quick-prompts">
-          <div class="chat-quick-prompts-label">Quick Threat Inquiries</div>
-          <button class="quick-prompt-chip" onclick="quickPromptClick('Analyze Cobalt Strike beaconing intervals and recommend EDR block rules')">
-            ✦ Cobalt Strike beaconing rules
+          <div class="chat-quick-prompts-label">
+            ${APP.chatbot.selectedIncidentId ? `Contextual Inquiries (Inc #${APP.chatbot.selectedIncidentId})` : 'Suggested SOC Inquiries'}
+          </div>
+          <button class="quick-prompt-chip" onclick="quickPromptClick('Why was this incident flagged?')">
+            ✦ Why was this incident flagged?
           </button>
-          <button class="quick-prompt-chip" onclick="quickPromptClick('Draft an immediate containment playbook for suspected ransomware activity')">
-            ✦ Ransomware containment playbook
+          <button class="quick-prompt-chip" onclick="quickPromptClick('What evidence supports this classification?')">
+            ✦ What evidence supports this?
           </button>
-          <button class="quick-prompt-chip" onclick="quickPromptClick('Explain how to deobfuscate PowerShell encoded commands in SIEM logs')">
-            ✦ PowerShell deobfuscation
+          <button class="quick-prompt-chip" onclick="quickPromptClick('Which playbook is appropriate?')">
+            ✦ Which playbook is appropriate?
           </button>
-          <button class="quick-prompt-chip" onclick="quickPromptClick('Draft an executive incident briefing for our CISO following NIST SP 800-61r2')">
-            ✦ CISO executive briefing draft
+          <button class="quick-prompt-chip" onclick="quickPromptClick('Show related incidents.')">
+            ✦ Show related incidents
+          </button>
+          <button class="quick-prompt-chip" onclick="quickPromptClick('What should I investigate next?')">
+            ✦ What should I investigate next?
           </button>
         </div>
       </div>
@@ -1797,7 +1852,7 @@ async function submitChatMessage(overrideText) {
         {
           id: Date.now(),
           role: 'assistant',
-          content: res.response,
+          content: res.content,
           is_mock: res.is_mock,
           created_at: new Date().toISOString(),
         }
@@ -1862,12 +1917,102 @@ async function openIncidentInChatbot(incId, publicId) {
   APP.chatbot.messages = [];
   await navigate('chatbot');
   setTimeout(() => {
-    submitChatMessage(`Please correlate all indicators, investigate attack progression, and recommend containment steps for incident ${publicId}.`);
-  }, 300);
+    submitChatMessage('Why was this incident flagged?');
+  }, 250);
 }
 
 function quickPromptClick(promptText) {
   submitChatMessage(promptText);
+}
+
+// ---- Drawer Embedded Threat Assistant Helpers ----
+APP.drawerChat = APP.drawerChat || {};
+
+async function askDrawerAssistant(incidentId, promptText) {
+  const input = document.getElementById(`drawer-chat-input-${incidentId}`);
+  if (input) input.value = promptText;
+  await submitDrawerAssistantMessage(incidentId);
+}
+
+async function submitDrawerAssistantMessage(incidentId) {
+  const input = document.getElementById(`drawer-chat-input-${incidentId}`);
+  const feed = document.getElementById(`drawer-chat-feed-${incidentId}`);
+  const sendBtn = document.getElementById(`drawer-chat-send-${incidentId}`);
+  if (!input || !feed) return;
+
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+
+  APP.drawerChat[incidentId] = APP.drawerChat[incidentId] || { messages: [], sending: false, conversationId: null };
+  const dState = APP.drawerChat[incidentId];
+  if (dState.sending) return;
+
+  dState.sending = true;
+  if (sendBtn) sendBtn.disabled = true;
+
+  // Optimistic message
+  dState.messages.push({ role: 'user', content: text, created_at: new Date().toISOString() });
+  renderDrawerChatFeed(incidentId);
+
+  try {
+    const res = await chatbotApi.send(text, dState.conversationId, incidentId);
+    dState.conversationId = res.conversation_id;
+    dState.messages.push({
+      role: 'assistant',
+      content: res.content,
+      is_mock: res.is_mock,
+      created_at: new Date().toISOString(),
+    });
+  } catch (err) {
+    dState.messages.push({
+      role: 'assistant',
+      content: `⚠️ Error consulting AI Assistant: ${err.message}`,
+      is_mock: true,
+      created_at: new Date().toISOString(),
+    });
+  } finally {
+    dState.sending = false;
+    if (sendBtn) sendBtn.disabled = false;
+    renderDrawerChatFeed(incidentId);
+  }
+}
+
+function renderDrawerChatFeed(incidentId) {
+  const feed = document.getElementById(`drawer-chat-feed-${incidentId}`);
+  if (!feed) return;
+
+  const dState = APP.drawerChat[incidentId] || { messages: [], sending: false };
+  if (!dState.messages.length && !dState.sending) {
+    feed.innerHTML = `<div style="font-size:12px;color:var(--text-muted);font-style:italic;">Ready for inquiries. Click a suggestion above or enter a question.</div>`;
+    return;
+  }
+
+  let html = dState.messages.map(m => {
+    const isUser = m.role === 'user';
+    return `
+      <div style="display:flex;flex-direction:column;align-items:${isUser ? 'flex-end' : 'flex-start'};gap:3px;">
+        <div style="font-size:10px;font-family:var(--font-mono);color:${isUser ? 'var(--accent)' : 'var(--accent-cyan)'};font-weight:600;">
+          ${isUser ? 'ANALYST' : (m.is_mock ? 'AI SENTINEL [SIMULATED]' : 'AI SENTINEL [LIVE]')}
+        </div>
+        <div style="background:${isUser ? 'rgba(92,200,255,0.12)' : 'rgba(21,25,32,0.95)'};border:1px solid ${isUser ? 'rgba(92,200,255,0.3)' : 'var(--glass-border)'};border-radius:var(--radius-md);padding:10px 14px;font-size:12.5px;color:var(--text-primary);line-height:1.6;max-width:94%;">
+          ${formatChatMarkdown(m.content)}
+        </div>
+      </div>
+    `;
+  }).join('');
+
+  if (dState.sending) {
+    html += `
+      <div style="display:flex;align-items:center;gap:6px;padding:8px 12px;background:rgba(21,25,32,0.7);border-radius:var(--radius-md);font-size:11.5px;color:var(--text-muted);">
+        <span class="status-dot live" style="width:6px;height:6px;"></span>
+        Synthesizing telemetry records and threat reasoning...
+      </div>
+    `;
+  }
+
+  feed.innerHTML = html;
+  feed.scrollTop = feed.scrollHeight;
 }
 
 // ============================================================

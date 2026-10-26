@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import engine, Base, SessionLocal
-from app.db.seed import seed_database
+from app.db.seed import seed_database, ensure_playbooks
 from app.routers import (
     auth,
     incidents,
@@ -42,16 +42,18 @@ async def lifespan(app: FastAPI):
     logger.info("Initializing database schemas...")
     Base.metadata.create_all(bind=engine)
 
-    if settings.DEMO_MODE:
-        logger.info("DEMO_MODE enabled — checking database seed state...")
-        db = SessionLocal()
-        try:
+    db = SessionLocal()
+    try:
+        ensure_playbooks(db)
+        if settings.DEMO_MODE:
+            logger.info("DEMO_MODE enabled — checking database seed state...")
             seed_database(db)
             logger.info("Database seed initialized successfully.")
-        except Exception as e:
-            logger.error(f"Error seeding database: {e}")
-        finally:
-            db.close()
+    except Exception as e:
+        logger.error(f"Error seeding database / playbooks: {e}")
+    finally:
+        db.close()
+
 
     if settings.is_production and settings.jwt_secret_is_default:
         logger.critical(
@@ -99,7 +101,6 @@ app.add_middleware(
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
-    allow_private_network=True,
 )
 
 

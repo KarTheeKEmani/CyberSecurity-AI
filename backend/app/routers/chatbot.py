@@ -15,6 +15,8 @@ from app.dependencies.auth import get_current_user
 from app.services.chatbot_service import chat_with_ai
 from app.services.audit_service import log_audit_event
 
+from app.models.incident import Incident
+
 router = APIRouter(prefix="/chatbot", tags=["AI Threat Assistant"])
 
 # --- Schemas ---
@@ -60,7 +62,50 @@ class ChatResponse(BaseModel):
     message_id: int
 
 
+class SuggestionResponse(BaseModel):
+    suggestions: List[str]
+    incident_id: Optional[int] = None
+    incident_public_id: Optional[str] = None
+
+
 # --- Endpoints ---
+
+@router.get("/suggestions", response_model=SuggestionResponse)
+def get_chat_suggestions(
+    incident_id: Optional[int] = None,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Get contextual suggested inquiries for the chatbot.
+    If incident_id is supplied, suggestions are tailored to the incident's threat context.
+    """
+    if incident_id:
+        incident = db.query(Incident).filter(Incident.id == incident_id).first()
+        if incident:
+            return {
+                "suggestions": [
+                    "Why was this incident flagged?",
+                    "What evidence supports this classification?",
+                    f"Which playbook is appropriate for {incident.category}?",
+                    "Show related incidents.",
+                    "What should I investigate next?",
+                ],
+                "incident_id": incident.id,
+                "incident_public_id": incident.public_id,
+            }
+
+    return {
+        "suggestions": [
+            "Why was this incident flagged?",
+            "What evidence supports this classification?",
+            "Which playbook is appropriate?",
+            "Show related incidents.",
+            "What should I investigate next?",
+        ],
+        "incident_id": None,
+        "incident_public_id": None,
+    }
 
 @router.post("/chat", response_model=ChatResponse)
 async def send_chat_message(

@@ -2,6 +2,7 @@
 Database Seed Service — Realistic Cybersecurity Telemetry & Initial System State
 """
 from datetime import datetime, timedelta, timezone
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 from app.core.security import get_password_hash, hash_api_key
 from app.models.user import User
@@ -15,10 +16,339 @@ from app.models.api_key import ApiKey
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
 
+PLAYBOOKS_DATA = [
+    {
+        "name": "Suspicious Login Detection & Response",
+        "category": "Identity & Access",
+        "severity": "MEDIUM",
+        "risk_level": "MEDIUM",
+        "operational_impact": "Minimal (Single user session challenge)",
+        "required_permissions": ["SOC Analyst", "IAM Admin"],
+        "preconditions": ["Target user account active in IdP", "Authentication audit logging enabled"],
+        "incident_types": ["Suspicious Login", "Anomalous Authentication", "Account Takeover", "Unusual Login"],
+        "description": "Validate authentication telemetry, invalidate active session tokens, flag mandatory credential rotation, and enforce hardware-backed MFA.",
+        "steps": [
+            {"desc": "Audit 24-hour authentication telemetry across IdP logs (Simulated)", "cmd": "idp-cli audit --user {username} --window 24h", "action_type": "investigation", "estimated_seconds": 3},
+            {"desc": "Invalidate active OAuth refresh tokens and terminate concurrent sessions (Simulated)", "cmd": "idp-cli session revoke --user {username} --all", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "Flag account for mandatory password reset upon next login (Simulated)", "cmd": "ad-cli user update {username} --pwd-reset-required true", "action_type": "remediation", "estimated_seconds": 3},
+            {"desc": "Enforce hardware-backed FIDO2 / WebAuthn policy (Simulated)", "cmd": "idp-cli mfa enforce-policy --user {username} --factor WebAuthn", "action_type": "remediation", "estimated_seconds": 5},
+            {"desc": "Scan user mailbox for unauthorized forwarding rules (Simulated)", "cmd": "o365-cli mailbox audit-rules --user {username}", "action_type": "verification", "estimated_seconds": 4},
+        ]
+    },
+    {
+        "name": "Brute Force Defense & IP Containment",
+        "category": "Identity / Network",
+        "severity": "HIGH",
+        "risk_level": "HIGH",
+        "operational_impact": "Low (Blocks suspect external IP)",
+        "required_permissions": ["SOC Analyst", "Perimeter Admin"],
+        "preconditions": ["Edge firewall / WAF API accessible", "Authentication telemetry streaming"],
+        "incident_types": ["Brute Force", "Credential Stuffing", "Password Spraying"],
+        "description": "Mitigate distributed or single-source credential-stuffing by blacklisting offending IPs, engaging temporary lockout, and verifying authentication blast radius.",
+        "steps": [
+            {"desc": "Blacklist attacking IP at perimeter firewall and WAF (Simulated)", "cmd": "iptables -I INPUT -s {source_ip} -j DROP && waf-cli block-ip --ip {source_ip} --duration 24h", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Cross-reference authentication logs to identify successful logins from attacker IP (Simulated)", "cmd": "grep '{source_ip}' /var/log/auth.log | grep -E 'Accepted|200 OK'", "action_type": "investigation", "estimated_seconds": 5},
+            {"desc": "Enforce CAPTCHA challenge and temporary lock on targeted accounts (Simulated)", "cmd": "auth-gate set-captcha-threshold --tier aggressive --window 1h", "action_type": "remediation", "estimated_seconds": 4},
+            {"desc": "Notify Identity Security on-call with attack vector metrics (Simulated)", "cmd": "pagerduty-cli incident create --title 'Brute Force Blast Radius' --severity P2", "action_type": "notification", "estimated_seconds": 2},
+        ]
+    },
+    {
+        "name": "Privilege Escalation Containment",
+        "category": "Endpoint / Identity",
+        "severity": "CRITICAL",
+        "risk_level": "CRITICAL",
+        "operational_impact": "High (Strips administrative privilege, terminates processes)",
+        "required_permissions": ["Incident Responder", "Domain Admin"],
+        "preconditions": ["EDR sensor active on target host", "Domain Controller reachable"],
+        "incident_types": ["Privilege Escalation", "UAC Bypass", "Token Impersonation", "Sudo Abuse"],
+        "description": "Isolate processes spawned with unauthorized elevated privileges, strip rogue group memberships, and lock down affected administrative credentials.",
+        "steps": [
+            {"desc": "Terminate unauthorized elevated process tree (Simulated)", "cmd": "taskkill /F /PID {pid} /T || kill -9 {pid}", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Strip rogue memberships from Domain Admins or Local Administrators (Simulated)", "cmd": "net localgroup Administrators {username} /delete", "action_type": "remediation", "estimated_seconds": 4},
+            {"desc": "Isolate compromised workstation from internal management VLAN (Simulated)", "cmd": "edr-cli isolate --host {target_system}", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "Audit Windows Event Log 4672 and 4728 for privilege escalation indicators (Simulated)", "cmd": "Get-WinEvent -FilterHashtable @{LogName='Security';Id=4672,4728} -MaxEvents 50", "action_type": "investigation", "estimated_seconds": 6},
+            {"desc": "Force immediate Kerberos Golden/Silver ticket invalidation (Simulated)", "cmd": "klist purge && repadmin /syncall", "action_type": "remediation", "estimated_seconds": 5},
+        ]
+    },
+    {
+        "name": "Phishing Triage & Mailbox Quarantine",
+        "category": "Messaging / Email",
+        "severity": "HIGH",
+        "risk_level": "MEDIUM",
+        "operational_impact": "Minimal (Quarantines weaponized emails tenant-wide)",
+        "required_permissions": ["Email Security Admin", "SOC Analyst"],
+        "preconditions": ["Exchange Online / Google Workspace API access configured"],
+        "incident_types": ["Phishing", "Spear Phishing", "Malicious Attachment", "Credential Harvester"],
+        "description": "Search and purge weaponized phishing emails across all tenant mailboxes, block malicious sender domains/URLs, and verify recipient interactions.",
+        "steps": [
+            {"desc": "Search tenant-wide for messages matching malicious Message-ID or Subject (Simulated)", "cmd": "o365-sec search-and-purge -Subject '{subject}' -Sender '{sender_email}' -HardDelete", "action_type": "containment", "estimated_seconds": 6},
+            {"desc": "Block malicious sender domain and attachment SHA256 at email gateway (Simulated)", "cmd": "mailgateway-cli block-domain --domain {sender_domain} --hash {file_hash}", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Query proxy telemetry for HTTP requests to embedded phishing URLs (Simulated)", "cmd": "proxy-query --destination '{phishing_url}' --timeframe 6h", "action_type": "investigation", "estimated_seconds": 5},
+            {"desc": "Force password reset and session invalidation for users who clicked (Simulated)", "cmd": "idp-cli session revoke-targeted --users-clicked '{phishing_url}'", "action_type": "remediation", "estimated_seconds": 4},
+            {"desc": "Submit weaponized sample to sandbox for detonated payload analysis (Simulated)", "cmd": "cuckoo-submit --file '{attachment_name}' --analysis-profile default", "action_type": "investigation", "estimated_seconds": 8},
+        ]
+    },
+    {
+        "name": "Ransomware Host Containment & Recovery",
+        "category": "Endpoint / Malware",
+        "severity": "CRITICAL",
+        "risk_level": "CRITICAL",
+        "operational_impact": "Severe (Host network isolation, file restoration)",
+        "required_permissions": ["Incident Responder", "Backup Admin"],
+        "preconditions": ["EDR agent responsive", "Air-gapped immutable backups verified"],
+        "incident_types": ["Ransomware", "LockBit", "BlackCat", "Wiper", "Mass File Encryption"],
+        "description": "Rapid host network isolation, ransomware process tree termination, perimeter C2 blacklisting, and immutable backup restoration.",
+        "steps": [
+            {"desc": "Isolate infected workstation from network (Simulated)", "cmd": "netsh advfirewall set allprofiles state on && netsh interface set interface 'Ethernet' disable", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Kill ransomware process tree (Simulated)", "cmd": "taskkill /F /PID 4832 /T", "action_type": "containment", "estimated_seconds": 2},
+            {"desc": "Block C2 IP at perimeter firewall (Simulated)", "cmd": "iptables -I OUTPUT -d 185.220.101.45 -j DROP", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Preserve memory dump for forensic analysis (Simulated)", "cmd": "winpmem_mini_x64.exe memdump.raw", "action_type": "forensics", "estimated_seconds": 7},
+            {"desc": "Restore files from clean offline volume shadow (Simulated)", "cmd": "wbadmin start recovery -version:latest -itemType:Volume -items:C: -recoveryTarget:C:", "action_type": "recovery", "estimated_seconds": 12},
+        ]
+    },
+    {
+        "name": "Suspicious PowerShell Execution Triage",
+        "category": "Endpoint / Execution",
+        "severity": "HIGH",
+        "risk_level": "HIGH",
+        "operational_impact": "Low (Terminates single interpreter process)",
+        "required_permissions": ["SOC Analyst", "Endpoint Admin"],
+        "preconditions": ["Script Block Logging (Event ID 4104) enabled"],
+        "incident_types": ["Suspicious PowerShell", "Obfuscated Command", "Script Execution", "AMSI Bypass"],
+        "description": "Analyze obfuscated or base64-encoded PowerShell execution, terminate active malicious interpreters, and block execution hashes.",
+        "steps": [
+            {"desc": "Dump and de-obfuscate base64 encoded command arguments from Event 4104 (Simulated)", "cmd": "Get-WinEvent -FilterHashtable @{LogName='Microsoft-Windows-PowerShell/Operational';Id=4104} | Select-Object -First 10 Message", "action_type": "investigation", "estimated_seconds": 4},
+            {"desc": "Terminate running PowerShell parent/child process tree (Simulated)", "cmd": "Stop-Process -Id {pid} -Force", "action_type": "containment", "estimated_seconds": 2},
+            {"desc": "Inspect script invocation for in-memory AMSI patching attempts (Simulated)", "cmd": "Get-Process -Id {pid} | Select-Object -ExpandProperty Modules | Where-Object {$_.ModuleName -like '*amsi*'}", "action_type": "investigation", "estimated_seconds": 4},
+            {"desc": "Add SHA256 script hash to EDR blacklist policy (Simulated)", "cmd": "edr-cli blacklist add --hash {script_hash} --comment 'Malicious PS payload'", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Isolate machine if child network beaconing was observed (Simulated)", "cmd": "edr-cli isolate --host {target_system}", "action_type": "containment", "estimated_seconds": 4},
+        ]
+    },
+    {
+        "name": "Command and Control (C2) Communication Blockade",
+        "category": "Network / Threat Intel",
+        "severity": "CRITICAL",
+        "risk_level": "CRITICAL",
+        "operational_impact": "Moderate (Blocks outbound routes/domains)",
+        "required_permissions": ["Perimeter Admin", "SOC Analyst"],
+        "preconditions": ["Internal DNS sinkhole configured", "Border router BGP/ACL access"],
+        "incident_types": ["C2 Communication", "Beaconing", "Cobalt Strike", "DNS Tunneling"],
+        "description": "Null-route active C2 IPs, sinkhole malicious domains in corporate resolvers, and kill beaconing socket connections on internal endpoints.",
+        "steps": [
+            {"desc": "Redirect malicious domain to sinkhole address in enterprise DNS (Simulated)", "cmd": "dns-cli sinkhole add --domain {c2_domain} --target 0.0.0.0", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Null-route C2 IP address at perimeter border gateways via BGP (Simulated)", "cmd": "ip route add blackhole {c2_ip}/32", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Identify all internal endpoints with active TCP/TLS sessions to C2 (Simulated)", "cmd": "netstat -ano | findstr {c2_ip} || ss -tap | grep {c2_ip}", "action_type": "investigation", "estimated_seconds": 5},
+            {"desc": "Isolate identified communicating endpoints pending full triage (Simulated)", "cmd": "edr-cli isolate --group c2-communicating-hosts", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "Analyze TLS beaconing jitter and frequency to confirm C2 framework (Simulated)", "cmd": "zeek-cut id.orig_h id.resp_h duration < conn.log | sort | uniq -c", "action_type": "investigation", "estimated_seconds": 6},
+        ]
+    },
+    {
+        "name": "Data Exfiltration Interruption",
+        "category": "Data Protection / DLP",
+        "severity": "CRITICAL",
+        "risk_level": "CRITICAL",
+        "operational_impact": "High (Severs outbound transfer socket)",
+        "required_permissions": ["DLP Admin", "Network Admin", "CISO"],
+        "preconditions": ["DLP gateway active", "Egress firewall operational"],
+        "incident_types": ["Data Exfiltration", "Sensitive Data Leak", "Mega Upload", "Cloud Egress Anomaly"],
+        "description": "Sever high-volume unauthorized outbound data transfers, revoke compromised cloud storage tokens, and determine data blast radius.",
+        "steps": [
+            {"desc": "Sever outbound network connection and RST active socket on interface (Simulated)", "cmd": "tcpkill -i eth0 host {destination_ip}", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Revoke cloud storage OAuth tokens or AWS IAM access keys used in transfer (Simulated)", "cmd": "aws iam update-access-key --access-key-id {key_id} --status Inactive", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "Calculate total exfiltrated byte count via NetFlow telemetry (Simulated)", "cmd": "nfdump -R /var/log/flows 'src ip {source_ip} and dst ip {destination_ip}' -s record/bytes", "action_type": "investigation", "estimated_seconds": 5},
+            {"desc": "Quarantine affected endpoint to prevent secondary transfer stages (Simulated)", "cmd": "edr-cli isolate --host {target_system}", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "File initial breach notification report with Data Protection Officer (Simulated)", "cmd": "soc-incident notify-dpo --incident {incident_public_id} --scope confidential", "action_type": "notification", "estimated_seconds": 3},
+        ]
+    },
+    {
+        "name": "WAF Rule Insertion & SQLi Remediation",
+        "category": "Web Application",
+        "severity": "CRITICAL",
+        "risk_level": "CRITICAL",
+        "operational_impact": "Minimal (Inserts WAF rule without service downtime)",
+        "required_permissions": ["WAF Engineer", "AppSec Analyst"],
+        "preconditions": ["WAF reverse proxy operational", "Web application access logs available"],
+        "incident_types": ["SQL Injection", "SQLi", "Web Application Exploit", "Database Exfiltration"],
+        "description": "Block attacking IP at WAF, inspect exfiltration logs for database schema disclosure, and deploy parameterized query patch.",
+        "steps": [
+            {"desc": "Block attacking IP at WAF and perimeter (Simulated)", "cmd": "waf-cli block-ip --ip 45.155.204.127 --duration permanent", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Inspect exfiltrated record count in web logs (Simulated)", "cmd": "grep '45.155.204.127' /var/log/nginx/access.log | awk '{print $9, $10}'", "action_type": "investigation", "estimated_seconds": 4},
+            {"desc": "Deploy parameterized query patch (Simulated)", "cmd": "git checkout -b hotfix/sqli-parameterization && git commit -m 'Enforce ORM parameterization'", "action_type": "remediation", "estimated_seconds": 5},
+            {"desc": "Run automated regression and penetration test (Simulated)", "cmd": "sqlmap -u 'https://api.prod.company.com/api/v2/users?id=1' --batch", "action_type": "verification", "estimated_seconds": 6},
+        ]
+    },
+    {
+        "name": "Distributed Denial of Service (DDoS) Mitigation",
+        "category": "Network / Availability",
+        "severity": "HIGH",
+        "risk_level": "HIGH",
+        "operational_impact": "Moderate (May enforce CAPTCHA / rate limits)",
+        "required_permissions": ["Network Admin", "Cloudflare/CDN Admin"],
+        "preconditions": ["Edge CDN / scrubbing center deployed"],
+        "incident_types": ["DDoS", "SYN Flood", "HTTP Flood", "UDP Amplification"],
+        "description": "Engage CDN Under-Attack Mode, enforce aggressive rate limiting, drop unauthenticated SYN floods, and engage ISP scrubbing.",
+        "steps": [
+            {"desc": "Activate CDN Under-Attack mode and Managed Challenge for incoming HTTP requests (Simulated)", "cmd": "cloudflare-cli zones set-security-level --level under_attack", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Enable aggressive rate limiting on targeted public endpoints (Simulated)", "cmd": "waf-cli rate-limit --threshold 100 --window 60s --action block", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "Enable SYN cookies and tune TCP backlog on load balancers (Simulated)", "cmd": "sysctl -w net.ipv4.tcp_syncookies=1 && sysctl -w net.ipv4.tcp_max_syn_backlog=4096", "action_type": "remediation", "estimated_seconds": 3},
+            {"desc": "Engage upstream ISP BGP Flowspec or scrubbing center to filter volumetric flood (Simulated)", "cmd": "bgp-flowspec announce --match-dest {vip_ip} --action redirect-scrubbing", "action_type": "remediation", "estimated_seconds": 5},
+            {"desc": "Monitor edge bandwidth consumption and origin latency until baseline returns (Simulated)", "cmd": "grafana-cli query --dashboard ddos-overview --interval 10s", "action_type": "verification", "estimated_seconds": 4},
+        ]
+    },
+    {
+        "name": "Unusual Geographical Login Investigation",
+        "category": "Identity / Threat Intel",
+        "severity": "MEDIUM",
+        "risk_level": "MEDIUM",
+        "operational_impact": "Minimal (Out-of-band push verification)",
+        "required_permissions": ["SOC Analyst"],
+        "preconditions": ["GeoIP database updated", "IdP user contact directory synced"],
+        "incident_types": ["Unusual Geo Login", "Impossible Travel", "Foreign IP Access"],
+        "description": "Correlate impossible travel velocity against known flight routes, trigger out-of-band mobile challenge, and terminate unauthorized foreign sessions.",
+        "steps": [
+            {"desc": "Calculate travel velocity between consecutive logins (Simulated)", "cmd": "geo-velocity-calc --ip1 {prev_ip} --ip2 {source_ip} --time-delta {delta_minutes}", "action_type": "investigation", "estimated_seconds": 3},
+            {"desc": "Send out-of-band push confirmation prompt to user's registered mobile device (Simulated)", "cmd": "idp-push-verify --user {username} --prompt 'Did you just log in from {country}?'", "action_type": "investigation", "estimated_seconds": 5},
+            {"desc": "If unconfirmed, revoke authentication session token immediately (Simulated)", "cmd": "idp-cli session revoke --session-id {session_id}", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Apply geofence policy blocking authentication from unapproved geographic region (Simulated)", "cmd": "iam-policy update --geofence-block {country_code} --user {username}", "action_type": "remediation", "estimated_seconds": 4},
+            {"desc": "Prompt user for credential rotation upon next trusted authentication (Simulated)", "cmd": "idp-cli user flag-rotation --user {username}", "action_type": "remediation", "estimated_seconds": 2},
+        ]
+    },
+    {
+        "name": "Suspicious Cloud Infrastructure Activity",
+        "category": "Cloud / DevSecOps",
+        "severity": "HIGH",
+        "risk_level": "HIGH",
+        "operational_impact": "Moderate (Isolates rogue cloud instance)",
+        "required_permissions": ["Cloud Security Admin", "IAM Admin"],
+        "preconditions": ["AWS CloudTrail / Azure Activity Log enabled", "Cloud CLI configured"],
+        "incident_types": ["Cloud Threat", "Unauthorized EC2 Instance", "S3 Bucket Public", "Cryptomining"],
+        "description": "Deactivate compromised cloud IAM access keys, isolate rogue VM instances, revert overly permissive security groups, and audit CloudTrail.",
+        "steps": [
+            {"desc": "Deactivate leaked or compromised IAM access key immediately (Simulated)", "cmd": "aws iam update-access-key --access-key-id {access_key} --status Inactive", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Attach containment security group (deny all) to rogue compute instance (Simulated)", "cmd": "aws ec2 modify-instance-attribute --instance-id {instance_id} --groups sg-containment-deny-all", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "Revert unauthorized Security Group ingress rules (0.0.0.0/0 on port 22/3389) (Simulated)", "cmd": "aws ec2 revoke-security-group-ingress --group-id {sg_id} --protocol tcp --port 22 --cidr 0.0.0.0/0", "action_type": "remediation", "estimated_seconds": 3},
+            {"desc": "Query CloudTrail for all API actions taken by compromised principal in 48h (Simulated)", "cmd": "aws cloudtrail lookup-events --lookup-attributes AttributeKey=AccessKeyId,AttributeValue={access_key}", "action_type": "investigation", "estimated_seconds": 6},
+            {"desc": "Snapshot instance EBS volume for offline forensic disk analysis (Simulated)", "cmd": "aws ec2 create-snapshot --volume-id {volume_id} --description 'Forensic image {incident_public_id}'", "action_type": "forensics", "estimated_seconds": 7},
+        ]
+    },
+    {
+        "name": "Unauthorized Configuration Changes",
+        "category": "Compliance / Infrastructure",
+        "severity": "MEDIUM",
+        "risk_level": "MEDIUM",
+        "operational_impact": "Low (Rolls back configuration to Git baseline)",
+        "required_permissions": ["SysAdmin", "Security Auditor"],
+        "preconditions": ["Configuration management (GitOps/Ansible) deployed", "File integrity monitoring active"],
+        "incident_types": ["Unauthorized Config", "FIM Alert", "System Tampering", "Policy Drift"],
+        "description": "Detect file integrity drift, diff modified configuration against trusted Git repository, restore verified baseline, and lock down file permissions.",
+        "steps": [
+            {"desc": "Inspect File Integrity Monitoring (FIM) alert to identify modified configuration files (Simulated)", "cmd": "osqueryi \"SELECT * FROM file_events WHERE path LIKE '/etc/%' ORDER BY time DESC LIMIT 10;\"", "action_type": "investigation", "estimated_seconds": 4},
+            {"desc": "Diff modified system file against master branch in central Git repository (Simulated)", "cmd": "git diff /etc/{config_file} origin/main:/etc/{config_file}", "action_type": "investigation", "estimated_seconds": 3},
+            {"desc": "Roll back configuration file to certified baseline (Simulated)", "cmd": "git checkout origin/main -- /etc/{config_file} && systemctl restart {service_name}", "action_type": "remediation", "estimated_seconds": 4},
+            {"desc": "Restrict file permissions and ownership to read-only for service accounts (Simulated)", "cmd": "chmod 644 /etc/{config_file} && chown root:root /etc/{config_file}", "action_type": "remediation", "estimated_seconds": 3},
+            {"desc": "Review auditd records for user ID and command that edited the file (Simulated)", "cmd": "ausearch -f /etc/{config_file} -i", "action_type": "investigation", "estimated_seconds": 4},
+        ]
+    },
+    {
+        "name": "Pass-the-Hash Containment & Kerberos Purge",
+        "category": "Identity & Access",
+        "severity": "CRITICAL",
+        "risk_level": "CRITICAL",
+        "operational_impact": "High (Purges tickets, isolates jump hosts)",
+        "required_permissions": ["Domain Admin", "Incident Responder"],
+        "preconditions": ["Active Directory domain controllers reachable", "EDR sensor running"],
+        "incident_types": ["Lateral Movement", "Pass-the-Hash", "PsExec", "WMI Execution", "Mimikatz"],
+        "description": "Isolate compromised pivot host, purge active Kerberos/NTLM tickets, remove malicious persistence tasks, and enable LSA protection.",
+        "steps": [
+            {"desc": "Isolate compromised host 192.168.1.210 (Simulated)", "cmd": "edr-cli isolate --host WKSTN-DEV-012", "action_type": "containment", "estimated_seconds": 4},
+            {"desc": "Purge active Kerberos/NTLM tickets for domain admins (Simulated)", "cmd": "klist purge", "action_type": "remediation", "estimated_seconds": 3},
+            {"desc": "Remove malicious scheduled task (Simulated)", "cmd": "schtasks /delete /tn 'WindowsUpdate' /f", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Enable LSA Protection on DCs (Simulated)", "cmd": "reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa /v RunAsPPL /t REG_DWORD /d 1 /f", "action_type": "remediation", "estimated_seconds": 4},
+            {"desc": "Initiate dual reset of Active Directory KRBTGT account password (Simulated)", "cmd": "ad-krbtgt-reset --mode immediate --replicate-all", "action_type": "remediation", "estimated_seconds": 8},
+        ]
+    },
+    {
+        "name": "Suspicious API Access & Abuse Mitigation",
+        "category": "API Security",
+        "severity": "HIGH",
+        "risk_level": "HIGH",
+        "operational_impact": "Low (Revokes specific client token)",
+        "required_permissions": ["API Gateway Admin", "SOC Analyst"],
+        "preconditions": ["API Gateway logging enabled", "Token revocation service active"],
+        "incident_types": ["Suspicious API Access", "API Scraping", "BOLA / IDOR", "Token Leak"],
+        "description": "Revoke compromised API client tokens, apply aggressive rate-limiting on calling IP/agent, inspect schema exposure, and rotate credentials.",
+        "steps": [
+            {"desc": "Revoke compromised bearer token or API key in token cache (Simulated)", "cmd": "redis-cli del 'oauth:token:{token_id}' || api-gw key revoke --id {key_id}", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Apply immediate rate throttle or block on client IP address at API gateway (Simulated)", "cmd": "api-gw rate-limit set --client-ip {source_ip} --limit 0", "action_type": "containment", "estimated_seconds": 3},
+            {"desc": "Query gateway access logs to determine full scope of endpoints accessed (Simulated)", "cmd": "grep '{token_id}' /var/log/api-gateway/access.log | jq '{path: .request_path, status: .response_code, bytes: .response_size}'", "action_type": "investigation", "estimated_seconds": 5},
+            {"desc": "Verify whether sensitive PII or restricted database records were returned in payloads (Simulated)", "cmd": "api-dlp inspect-logs --client-ip {source_ip} --lookback 4h", "action_type": "investigation", "estimated_seconds": 5},
+            {"desc": "Issue notification to API consumer / developer to rotate client secrets (Simulated)", "cmd": "notify-devs --client-id {client_id} --reason 'Security Token Revocation'", "action_type": "notification", "estimated_seconds": 3},
+        ]
+    },
+]
+
+
+def ensure_playbooks(db: Session):
+    """Ensure database schema includes structured playbook columns and all 15 playbooks exist."""
+    # 1. Migrate SQLite columns safely if needed
+    try:
+        col_res = db.execute(text("PRAGMA table_info(playbooks)")).fetchall()
+        existing_cols = [r[1] for r in col_res] if col_res else []
+        if existing_cols:
+            if "risk_level" not in existing_cols:
+                db.execute(text("ALTER TABLE playbooks ADD COLUMN risk_level VARCHAR(20) DEFAULT 'HIGH'"))
+            if "operational_impact" not in existing_cols:
+                db.execute(text("ALTER TABLE playbooks ADD COLUMN operational_impact VARCHAR(100) DEFAULT 'Moderate'"))
+            if "required_permissions" not in existing_cols:
+                db.execute(text("ALTER TABLE playbooks ADD COLUMN required_permissions JSON DEFAULT '[]'"))
+            if "preconditions" not in existing_cols:
+                db.execute(text("ALTER TABLE playbooks ADD COLUMN preconditions JSON DEFAULT '[]'"))
+            if "incident_types" not in existing_cols:
+                db.execute(text("ALTER TABLE playbooks ADD COLUMN incident_types JSON DEFAULT '[]'"))
+            db.commit()
+    except Exception as e:
+        print(f"Schema check on playbooks: {e}")
+
+    # 2. Upsert all 15 playbooks
+    now = datetime.now(timezone.utc)
+    for pb_data in PLAYBOOKS_DATA:
+        existing = db.query(Playbook).filter(Playbook.name == pb_data["name"]).first()
+        if existing:
+            existing.category = pb_data["category"]
+            existing.severity = pb_data["severity"]
+            existing.risk_level = pb_data.get("risk_level", "HIGH")
+            existing.operational_impact = pb_data.get("operational_impact", "Moderate")
+            existing.required_permissions = pb_data.get("required_permissions", [])
+            existing.preconditions = pb_data.get("preconditions", [])
+            existing.incident_types = pb_data.get("incident_types", [])
+            existing.description = pb_data["description"]
+            existing.steps = pb_data["steps"]
+            existing.enabled = True
+        else:
+            new_pb = Playbook(
+                name=pb_data["name"],
+                category=pb_data["category"],
+                severity=pb_data["severity"],
+                risk_level=pb_data.get("risk_level", "HIGH"),
+                operational_impact=pb_data.get("operational_impact", "Moderate"),
+                required_permissions=pb_data.get("required_permissions", []),
+                preconditions=pb_data.get("preconditions", []),
+                incident_types=pb_data.get("incident_types", []),
+                description=pb_data["description"],
+                steps=pb_data["steps"],
+                enabled=True,
+                created_at=now - timedelta(days=30),
+            )
+            db.add(new_pb)
+    db.commit()
+
 
 def seed_database(db: Session):
     """Seed database with production-grade demo security records if empty."""
-    # Check if already seeded
+    # Ensure playbooks are always up to date
+    ensure_playbooks(db)
+
+    # Check if user data already seeded
     if db.query(User).count() > 0:
         return
 
@@ -48,61 +378,6 @@ def seed_database(db: Session):
         db.add(user)
         db.flush()
         created_users[u["email"]] = user
-
-    # 2. Playbooks
-    playbooks_data = [
-        {
-            "name": "Ransomware Host Containment & Recovery",
-            "category": "Endpoint / Malware",
-            "severity": "CRITICAL",
-            "description": "Rapid host network isolation, ransomware process tree termination, and immutable backup restoration.",
-            "steps": [
-                {"desc": "Isolate infected workstation from network (Simulated)", "cmd": "netsh advfirewall set allprofiles state on && netsh interface set interface 'Ethernet' disable"},
-                {"desc": "Kill ransomware process tree (Simulated)", "cmd": "taskkill /F /PID 4832 /T"},
-                {"desc": "Block C2 IP at perimeter firewall (Simulated)", "cmd": "iptables -I OUTPUT -d 185.220.101.45 -j DROP"},
-                {"desc": "Preserve memory dump for forensic analysis (Simulated)", "cmd": "winpmem_mini_x64.exe memdump.raw"},
-                {"desc": "Restore files from clean offline volume shadow (Simulated)", "cmd": "wbadmin start recovery -version:08/30/2026-08:00 -itemType:Volume -items:C: -recoveryTarget:C:"},
-            ]
-        },
-        {
-            "name": "WAF Rule Insertion & SQLi Remediation",
-            "category": "Web Application",
-            "severity": "CRITICAL",
-            "description": "Block offending source IP at WAF, inspect exfiltration logs, and verify parameterization.",
-            "steps": [
-                {"desc": "Block attacking IP at WAF and perimeter (Simulated)", "cmd": "waf-cli block-ip --ip 45.155.204.127 --duration permanent"},
-                {"desc": "Inspect exfiltrated record count in web logs (Simulated)", "cmd": "grep '45.155.204.127' /var/log/nginx/access.log | awk '{print $9, $10}'"},
-                {"desc": "Deploy parameterized query patch (Simulated)", "cmd": "git checkout -b hotfix/sqli-parameterization && git commit -m 'Enforce ORM parameterization'"},
-                {"desc": "Run automated regression and penetration test (Simulated)", "cmd": "sqlmap -u 'https://api.prod.company.com/api/v2/users?id=1' --batch"},
-            ]
-        },
-        {
-            "name": "Pass-the-Hash Containment & Kerberos Purge",
-            "category": "Identity & Access",
-            "severity": "CRITICAL",
-            "description": "Purge active Kerberos/NTLM tickets, isolate compromised jump box, and rotate Domain Admin credentials.",
-            "steps": [
-                {"desc": "Isolate compromised host 192.168.1.210 (Simulated)", "cmd": "edr-cli isolate --host WKSTN-DEV-012"},
-                {"desc": "Purge active Kerberos/NTLM tickets for domain admins (Simulated)", "cmd": "klist purge"},
-                {"desc": "Remove malicious scheduled task (Simulated)", "cmd": "schtasks /delete /tn 'WindowsUpdate' /f"},
-                {"desc": "Enable LSA Protection on DCs (Simulated)", "cmd": "reg add HKLM\\SYSTEM\\CurrentControlSet\\Control\\Lsa /v RunAsPPL /t REG_DWORD /d 1 /f"},
-            ]
-        },
-    ]
-    created_playbooks = {}
-    for pb in playbooks_data:
-        playbook = Playbook(
-            name=pb["name"],
-            category=pb["category"],
-            severity=pb["severity"],
-            description=pb["description"],
-            steps=pb["steps"],
-            enabled=True,
-            created_at=now - timedelta(days=60),
-        )
-        db.add(playbook)
-        db.flush()
-        created_playbooks[pb["name"]] = playbook
 
     # 3. Incidents & Associated Telemetry
     incidents_data = [

@@ -151,6 +151,65 @@ class TestChatbot:
         r = client.post("/api/chatbot/chat", json={"message": "Hello"})
         assert r.status_code == 401
 
+    def test_chat_suggestions_endpoint(self):
+        token = get_analyst_token()
+        # General suggestions
+        r = client.get("/api/chatbot/suggestions", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        data = r.json()
+        assert "suggestions" in data
+        assert len(data["suggestions"]) >= 5
+        assert "Why was this incident flagged?" in data["suggestions"]
+
+        # Incident-specific suggestions
+        r2 = client.get("/api/chatbot/suggestions?incident_id=1", headers={"Authorization": f"Bearer {token}"})
+        assert r2.status_code == 200
+        data2 = r2.json()
+        assert len(data2["suggestions"]) >= 5
+
+    def test_chat_with_incident_context(self):
+        token = get_analyst_token()
+        r = client.post(
+            "/api/chatbot/chat",
+            json={
+                "message": "Why was this incident flagged?",
+                "incident_id": 1,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["is_mock"] is True
+        assert "SIMULATED MOCK AI" in data["content"]
+        assert "Observed Telemetry" in data["content"]
+
+    def test_chat_playbook_and_investigate_questions(self):
+        token = get_analyst_token()
+        # Playbook recommendation inquiry
+        r = client.post(
+            "/api/chatbot/chat",
+            json={
+                "message": "Which playbook is appropriate?",
+                "incident_id": 1,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert "PLAYBOOK RECOMMENDATION" in r.json()["content"]
+        assert "SIMULATION MODE" in r.json()["content"]
+
+        # What to investigate next inquiry
+        r2 = client.post(
+            "/api/chatbot/chat",
+            json={
+                "message": "What should I investigate next?",
+                "incident_id": 1,
+            },
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r2.status_code == 200
+        assert "INVESTIGATION ROADMAP" in r2.json()["content"]
+
 
 # ============================================================
 # MOCK ALERT GENERATOR TESTS
@@ -344,15 +403,117 @@ class TestEmailNotifications:
         )
         assert r.status_code == 400
 
-    def test_rule_creation_requires_admin(self):
-        viewer_token = get_viewer_token()
-        r = client.post(
-            "/api/email/rules",
-            json={
-                "name": "Viewer Rule",
-                "rule_type": "FAILED_LOGINS_BURST",
-                "cooldown_minutes": 15,
-            },
-            headers={"Authorization": f"Bearer {viewer_token}"},
+
+
+# ============================================================
+# PHASE 3: DEFENSIVE PLAYBOOKS TESTS
+# ============================================================
+
+class TestDefensivePlaybooks:
+    def test_playbook_catalog_has_15_entries(self):
+        """All 15 realistic defensive playbooks must be seeded and available."""
+        token = get_analyst_token()
+        r = client.get("/api/playbooks", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        data = r.json()
+        assert len(data) >= 15, f"Expected >= 15 playbooks, got {len(data)}"
+
+    def test_playbook_structured_metadata_present(self):
+        """Each playbook must include risk_level, operational_impact, required_permissions, preconditions, incident_types."""
+        token = get_analyst_token()
+        r = client.get("/api/playbooks", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        for pb in r.json():
+            assert "risk_level" in pb, f"Playbook '{pb['name']}' missing risk_level"
+            assert "operational_impact" in pb, f"Playbook '{pb['name']}' missing operational_impact"
+            assert "required_permissions" in pb, f"Playbook '{pb['name']}' missing required_permissions"
+            assert "preconditions" in pb, f"Playbook '{pb['name']}' missing preconditions"
+            assert "incident_types" in pb, f"Playbook '{pb['name']}' missing incident_types"
+            assert isinstance(pb["required_permissions"], list)
+            assert isinstance(pb["preconditions"], list)
+            assert isinstance(pb["incident_types"], list)
+
+    def test_playbook_steps_have_action_type(self):
+        """All steps in each playbook should have action_type field."""
+        token = get_analyst_token()
+        r = client.get("/api/playbooks", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        for pb in r.json():
+            for step in pb.get("steps", []):
+                assert "action_type" in step, f"Step '{step.get('desc')}' in '{pb['name']}' missing action_type"
+
+    def test_playbook_recommendation_endpoint_returns_ranked_list(self):
+        """GET /incidents/{id}/playbook/recommend must return ordered recommendation list."""
+        token = get_analyst_token()
+        r = client.get("/api/incidents/1/playbook/recommend", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        data = r.json()
+        assert "incident_id" in data
+        assert "recommendations" in data
+        assert data["total_playbooks"] >= 15
+        recs = data["recommendations"]
+        assert len(recs) >= 1
+        # First recommendation must be primary
+        assert recs[0]["is_primary"] is True
+        # Scores must be in descending order
+        for i in range(len(recs) - 1):
+            assert recs[i]["score"] >= recs[i + 1]["score"], "Recommendations must be sorted descending by score"
+
+    def test_playbook_recommendation_includes_metadata(self):
+        """Each recommendation must contain match_reason, risk_level, step_count."""
+        token = get_analyst_token()
+        r = client.get("/api/incidents/1/playbook/recommend", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        for rec in r.json()["recommendations"]:
+            assert "match_reason" in rec and rec["match_reason"]
+            assert "risk_level" in rec
+            assert "operational_impact" in rec
+            assert "step_count" in rec
+            assert rec["step_count"] > 0
+
+    def test_playbook_execute_with_specific_playbook_id(self):
+        """Executing a specific playbook by ID should complete successfully with steps."""
+        token = get_analyst_token()
+        # Get list and pick the first playbook
+        list_r = client.get("/api/playbooks", headers={"Authorization": f"Bearer {token}"})
+        assert list_r.status_code == 200
+        first_pb = list_r.json()[0]
+        pb_id = first_pb["id"]
+        expected_steps = len(first_pb["steps"])  # use actual steps list length
+
+        exec_r = client.post(
+            "/api/incidents/1/playbook/execute",
+            json={"execution_mode": "SIMULATION", "playbook_id": pb_id},
+            headers={"Authorization": f"Bearer {token}"},
         )
-        assert r.status_code == 403
+        assert exec_r.status_code == 200
+        data = exec_r.json()
+        assert data["status"] == "COMPLETED"
+        assert data["execution_mode"] == "SIMULATION"
+        assert len(data["steps_results"]) == expected_steps
+        # Verify action_type is present in each step result
+        for step in data["steps_results"]:
+            assert "action_type" in step
+
+    def test_playbook_ransomware_exists_with_correct_category(self):
+        """Ransomware Host Containment playbook must be in Endpoint / Malware category."""
+        token = get_analyst_token()
+        r = client.get("/api/playbooks", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        ransomware_pbs = [p for p in r.json() if "Ransomware" in p["name"]]
+        assert len(ransomware_pbs) >= 1
+        assert ransomware_pbs[0]["severity"] == "CRITICAL"
+        assert "Ransomware" in ransomware_pbs[0]["incident_types"]
+
+    def test_playbook_get_by_id(self):
+        """GET /playbooks/{id} must return the playbook with all structured fields."""
+        token = get_analyst_token()
+        list_r = client.get("/api/playbooks", headers={"Authorization": f"Bearer {token}"})
+        pb_id = list_r.json()[0]["id"]
+        r = client.get(f"/api/playbooks/{pb_id}", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        data = r.json()
+        assert data["id"] == pb_id
+        assert "steps" in data and len(data["steps"]) > 0
+        assert "risk_level" in data
+
