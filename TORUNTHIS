@@ -1,0 +1,3 @@
+cd /Users/shashidhar/Documents/Projects/AIAC/aiaccyber/backend
+source .venv/bin/activate
+python main.py
