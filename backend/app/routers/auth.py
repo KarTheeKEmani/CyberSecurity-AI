@@ -69,8 +69,11 @@ def register(
     return user
 
 
+from app.services.alert_correlation_service import evaluate_login_failure, evaluate_login_success
+
+
 @router.post("/login", response_model=Token)
-def login(
+async def login(
     req: LoginRequest,
     request: Request,
     db: Session = Depends(get_db),
@@ -78,15 +81,17 @@ def login(
     """
     Authenticate user credentials, generate signed JWT tokens, and record audit telemetry.
     Supports role selection demo mode if matching user profile exists.
+    Correlates failed login bursts and suspicious logins following failed attempts.
     """
     email_clean = req.email.lower().strip()
+    client_ip = get_client_ip(request)
     user = db.query(User).filter(User.email == email_clean).first()
 
-    # If demo mode is active in non-production and user didn't exist yet, look up by requested role
+    # If demo mode is active in non-production and user explicitly requested role, look up by requested role
     is_demo = settings.DEMO_MODE and not settings.is_production
-    if not user and is_demo:
+    if not user and is_demo and req.role:
         # Fallback to role matching if demo user selected by role button
-        target_role = (req.role or "ANALYST").upper()
+        target_role = req.role.upper()
         user = db.query(User).filter(User.role == target_role).first()
 
     if not user:
@@ -99,8 +104,12 @@ def login(
             user_name="Unregistered User",
             detail=f"Failed login attempt for email {email_clean} — Account not found",
             severity="warning",
-            ip_address=get_client_ip(request),
+            ip_address=client_ip,
         )
+        try:
+            await evaluate_login_failure(db=db, email=email_clean, ip_address=client_ip)
+        except Exception as e:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -121,8 +130,12 @@ def login(
             user=user,
             detail=f"Failed login attempt for {user.email} — Invalid credentials",
             severity="warning",
-            ip_address=get_client_ip(request),
+            ip_address=client_ip,
         )
+        try:
+            await evaluate_login_failure(db=db, email=email_clean, ip_address=client_ip)
+        except Exception as e:
+            pass
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect email or password",
@@ -152,8 +165,14 @@ def login(
         user=user,
         detail=f"Successful JWT session authenticated for {user.email} [{user.role}]",
         severity="info",
-        ip_address=get_client_ip(request),
+        ip_address=client_ip,
     )
+
+    # Correlate suspicious successful login after recent failed attempts
+    try:
+        await evaluate_login_success(db=db, email=user.email, ip_address=client_ip)
+    except Exception as e:
+        pass
 
     return {
         "access_token": access_token,

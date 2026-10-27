@@ -167,7 +167,7 @@ async def send_security_email(
         logger.info(f"[EMAIL SIMULATION] To={recipient} Subject={subject}")
     else:
         # Attempt real delivery in background
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         success, provider_resp = await loop.run_in_executor(
             None, _send_smtp, recipient, subject, body_html
         )
@@ -181,6 +181,33 @@ async def send_security_email(
         else:
             logger.warning(f"[EMAIL FAILED] To={recipient}: {provider_resp}")
 
+    db.refresh(log)
+    return log
+
+
+async def retry_email(db: Session, log: EmailLog) -> EmailLog:
+    """
+    Retry delivering a previously failed or queued email.
+    Increments retry_count and logs outcome.
+    """
+    now = datetime.now(timezone.utc)
+    is_simulation = settings.EMAIL_DEMO_MODE or not settings.EMAIL_ENABLED
+    log.retry_count += 1
+
+    if is_simulation:
+        log.status = "SIMULATED"
+        log.provider_response = f"Email simulation re-attempt (retry #{log.retry_count}) recorded"
+        log.sent_at = now
+    else:
+        loop = asyncio.get_running_loop()
+        success, provider_resp = await loop.run_in_executor(
+            None, _send_smtp, log.recipient, log.subject, log.body_text
+        )
+        log.status = "DELIVERED" if success else "FAILED"
+        log.provider_response = provider_resp
+        log.sent_at = now if success else None
+
+    db.commit()
     db.refresh(log)
     return log
 

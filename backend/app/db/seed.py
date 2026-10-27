@@ -15,6 +15,7 @@ from app.models.integration import Integration
 from app.models.api_key import ApiKey
 from app.models.audit_log import AuditLog
 from app.models.notification import Notification
+from app.models.rule import DetectionRule
 
 PLAYBOOKS_DATA = [
     {
@@ -343,10 +344,88 @@ def ensure_playbooks(db: Session):
     db.commit()
 
 
+
+DEFAULT_DETECTION_RULES = [
+    {
+        "name": "Brute-Force & Bursts of Failed Logins",
+        "rule_type": "FAILED_LOGINS_BURST",
+        "description": "Correlates repeated failed login attempts from a single source IP or user account within a sliding time window.",
+        "severity": "HIGH",
+        "conditions": {"threshold": 5, "window_minutes": 10},
+        "actions": ["CREATE_INCIDENT", "SEND_EMAIL"],
+        "cooldown_minutes": 15,
+        "enabled": True,
+    },
+    {
+        "name": "Suspicious Successful Login Following Failed Attempts",
+        "rule_type": "LOGIN_AFTER_FAILURES",
+        "description": "Detects a successful authentication immediately following multiple failed login attempts on the same account within 10 minutes.",
+        "severity": "HIGH",
+        "conditions": {"threshold": 3, "window_minutes": 10},
+        "actions": ["CREATE_INCIDENT", "SEND_EMAIL"],
+        "cooldown_minutes": 15,
+        "enabled": True,
+    },
+    {
+        "name": "Critical Security Incident Rapid Escalation",
+        "rule_type": "CRITICAL_INCIDENT_INGEST",
+        "description": "Triggers urgent email notification whenever any CRITICAL-severity incident is ingested or generated.",
+        "severity": "CRITICAL",
+        "conditions": {"severity": "CRITICAL"},
+        "actions": ["SEND_EMAIL", "BROADCAST_ALERT"],
+        "cooldown_minutes": 5,
+        "enabled": True,
+    },
+    {
+        "name": "Privilege Escalation Indicator Detection",
+        "rule_type": "CUSTOM",
+        "description": "Monitors for indicators of unauthorized administrative rights acquisition, sudo abuse, or UAC bypass.",
+        "severity": "HIGH",
+        "conditions": {"category": "Privilege Escalation"},
+        "actions": ["SEND_EMAIL"],
+        "cooldown_minutes": 10,
+        "enabled": True,
+    },
+    {
+        "name": "Ransomware & High-Impact Malware Ingestion",
+        "rule_type": "HIGH_SEVERITY_ALERT",
+        "description": "Immediate SOC team dispatch when ransomware encryption activity or destructive malware telemetry is detected.",
+        "severity": "CRITICAL",
+        "conditions": {"categories": ["Ransomware", "Malware", "Endpoint / Malware"]},
+        "actions": ["SEND_EMAIL", "BROADCAST_ALERT"],
+        "cooldown_minutes": 10,
+        "enabled": True,
+    },
+]
+
+
+def ensure_detection_rules(db: Session):
+    """Ensure baseline automated detection and notification rules exist in the database."""
+    now = datetime.now(timezone.utc)
+    for rule_data in DEFAULT_DETECTION_RULES:
+        existing = db.query(DetectionRule).filter(DetectionRule.name == rule_data["name"]).first()
+        if not existing:
+            new_rule = DetectionRule(
+                name=rule_data["name"],
+                rule_type=rule_data["rule_type"],
+                description=rule_data["description"],
+                severity=rule_data["severity"],
+                conditions=rule_data["conditions"],
+                actions=rule_data["actions"],
+                cooldown_minutes=rule_data["cooldown_minutes"],
+                enabled=rule_data["enabled"],
+                created_at=now,
+                updated_at=now,
+            )
+            db.add(new_rule)
+    db.commit()
+
+
 def seed_database(db: Session):
     """Seed database with production-grade demo security records if empty."""
-    # Ensure playbooks are always up to date
+    # Ensure playbooks and detection rules are always up to date
     ensure_playbooks(db)
+    ensure_detection_rules(db)
 
     # Check if user data already seeded
     if db.query(User).count() > 0:

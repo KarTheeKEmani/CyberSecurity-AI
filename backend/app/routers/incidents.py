@@ -195,6 +195,13 @@ async def create_incident(
         "color": notif.color,
     })
 
+    # Evaluate automated detection & notification rules (Phase 5)
+    try:
+        from app.services.alert_correlation_service import evaluate_incident_rules
+        await evaluate_incident_rules(db=db, incident=incident)
+    except Exception as e:
+        pass
+
     return incident
 
 

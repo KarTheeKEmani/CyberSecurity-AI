@@ -88,6 +88,13 @@ async def generate_single_alert(
         "created_at": incident.created_at.isoformat(),
     })
 
+    # Evaluate automated detection rules for generated simulated alerts
+    try:
+        from app.services.alert_correlation_service import evaluate_incident_rules
+        await evaluate_incident_rules(db=db, incident=incident)
+    except Exception as e:
+        pass
+
     return {
         "status": "created",
         "incident": {
@@ -173,7 +180,7 @@ def get_generator_status(current_user: User = Depends(get_current_user)):
 
 @router.get("/scheduler/status")
 def get_auto_scheduler_status(current_user: User = Depends(get_current_user)):
-    """Get the auto-alert scheduler state (fires every AUTO_ALERT_INTERVAL_SECONDS)."""
+    """Get the auto-alert scheduler state."""
     return auto_alert_scheduler.get_state()
 
 
@@ -189,3 +196,58 @@ def stop_auto_scheduler(current_user: User = Depends(require_role(["ADMIN"]))):
     """Manually stop the auto-alert scheduler (admin only)."""
     auto_alert_scheduler.stop_scheduler()
     return {"status": "stopped", **auto_alert_scheduler.get_state()}
+
+
+# --- Phase 4 additions ---
+
+class SchedulerPauseResumeResponse(BaseModel):
+    status: str
+    running: bool
+    paused: bool
+    interval_seconds: int
+    total_generated: int
+
+
+class SchedulerConfigPatch(BaseModel):
+    interval_seconds: int = Field(..., ge=10, le=3600,
+                                  description="New firing interval in seconds (10–3600)")
+
+
+@router.post("/scheduler/pause")
+def pause_auto_scheduler(current_user: User = Depends(require_role(["ADMIN"]))):
+    """
+    Pause the auto-alert scheduler without killing its background task.
+    Alerts will stop firing but the task remains alive for fast resume.
+    Admin only.
+    """
+    state = auto_alert_scheduler.pause_scheduler()
+    return {"status": "paused", **state}
+
+
+@router.post("/scheduler/resume")
+def resume_auto_scheduler(current_user: User = Depends(require_role(["ADMIN"]))):
+    """
+    Resume the auto-alert scheduler from a paused state.
+    Firing resumes on the next loop tick (within ~2 s).
+    Admin only.
+    """
+    state = auto_alert_scheduler.resume_scheduler()
+    return {"status": "resumed", **state}
+
+
+@router.patch("/scheduler/config")
+def configure_auto_scheduler(
+    body: SchedulerConfigPatch,
+    current_user: User = Depends(require_role(["ADMIN"])),
+):
+    """
+    Update the scheduler's firing interval at runtime without restarting.
+    The new interval takes effect after the current sleep cycle.
+    Admin only.
+    """
+    try:
+        state = auto_alert_scheduler.set_interval(body.interval_seconds)
+        return {"status": "updated", **state}
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+

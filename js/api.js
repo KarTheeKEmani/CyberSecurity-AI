@@ -196,8 +196,21 @@ const alertGenApi = {
       body: JSON.stringify({ count, category, severity }),
     }),
   getCategories: () => ApiClient.request('/alerts/generate/categories'),
-  getStatus: () => ApiClient.request('/alerts/generate/status'),
+  getStatus:     () => ApiClient.request('/alerts/generate/status'),
+
+  // --- Phase 4: Scheduler Controls ---
+  getSchedulerStatus: () => ApiClient.request('/alerts/generate/scheduler/status'),
+  startScheduler:     () => ApiClient.request('/alerts/generate/scheduler/start',  { method: 'POST' }),
+  stopScheduler:      () => ApiClient.request('/alerts/generate/scheduler/stop',   { method: 'POST' }),
+  pauseScheduler:     () => ApiClient.request('/alerts/generate/scheduler/pause',  { method: 'POST' }),
+  resumeScheduler:    () => ApiClient.request('/alerts/generate/scheduler/resume', { method: 'POST' }),
+  configureScheduler: (interval_seconds) =>
+    ApiClient.request('/alerts/generate/scheduler/config', {
+      method: 'PATCH',
+      body: JSON.stringify({ interval_seconds }),
+    }),
 };
+
 
 // NEW: Email Notifications API
 const emailApi = {
@@ -208,6 +221,9 @@ const emailApi = {
   deleteRule: (id) => ApiClient.request(`/email/rules/${id}`, { method: 'DELETE' }),
   getLogs: (page = 1) => ApiClient.request(`/email/logs?page=${page}`),
   sendTest: (recipient) => ApiClient.request('/email/test', { method: 'POST', body: JSON.stringify({ recipient }) }),
+  getRecipients: () => ApiClient.request('/email/recipients'),
+  updateRecipients: (recipients) => ApiClient.request('/email/recipients', { method: 'POST', body: JSON.stringify({ recipients }) }),
+  retryLog: (id) => ApiClient.request(`/email/logs/${id}/retry`, { method: 'POST' }),
 };
 
 const playbooksApi = {

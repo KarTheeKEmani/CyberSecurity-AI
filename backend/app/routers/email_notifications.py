@@ -14,7 +14,7 @@ from app.models.rule import DetectionRule
 from app.models.user import User
 from app.dependencies.auth import get_current_user, require_role, get_client_ip
 from app.services.audit_service import log_audit_event
-from app.services.email_service import send_security_email
+from app.services.email_service import send_security_email, retry_email
 
 router = APIRouter(prefix="/email", tags=["Email Notifications"])
 
@@ -284,8 +284,89 @@ def get_email_config(current_user: User = Depends(require_role(["ADMIN"]))):
         "smtp_configured": bool(settings.SMTP_USERNAME),
         "from_address": settings.EMAIL_FROM_ADDRESS,
         "recipients_configured": len(settings.NOTIFICATION_RECIPIENTS),
+        "recipients": settings.NOTIFICATION_RECIPIENTS,
         "mode_label": (
             "EMAIL SIMULATION" if settings.EMAIL_DEMO_MODE or not settings.EMAIL_ENABLED
             else "LIVE EMAIL"
         ),
     }
+
+
+# --- Recipient Management ---
+
+class RecipientsUpdateRequest(BaseModel):
+    recipients: List[EmailStr] = Field(..., min_length=1, description="List of notification recipient email addresses")
+
+
+@router.get("/recipients")
+def get_notification_recipients(
+    current_user: User = Depends(get_current_user),
+):
+    """Get the active email notification recipients."""
+    return {
+        "recipients": list(settings.NOTIFICATION_RECIPIENTS),
+        "count": len(settings.NOTIFICATION_RECIPIENTS),
+    }
+
+
+@router.post("/recipients")
+def update_notification_recipients(
+    body: RecipientsUpdateRequest,
+    request: Request,
+    current_user: User = Depends(require_role(["ADMIN"])),
+    db: Session = Depends(get_db),
+):
+    """Update active notification recipients list (Admin only)."""
+    clean_recipients = [r.strip().lower() for r in body.recipients if r.strip()]
+    if not clean_recipients:
+        raise HTTPException(status_code=400, detail="At least one valid recipient email is required.")
+
+    old_recipients = list(settings.NOTIFICATION_RECIPIENTS)
+    settings.NOTIFICATION_RECIPIENTS = clean_recipients
+
+    log_audit_event(
+        db=db,
+        action="NOTIFICATION_RECIPIENTS_UPDATED",
+        resource="EMAIL_CONFIG",
+        resource_id="recipients",
+        user=current_user,
+        detail=f"Notification recipients updated from {old_recipients} to {clean_recipients} by {current_user.email}",
+        severity="info",
+        ip_address=get_client_ip(request),
+    )
+
+    return {
+        "status": "updated",
+        "recipients": settings.NOTIFICATION_RECIPIENTS,
+        "count": len(settings.NOTIFICATION_RECIPIENTS),
+    }
+
+
+# --- Email Retry ---
+
+@router.post("/logs/{log_id}/retry", response_model=EmailLogResponse)
+async def retry_email_delivery(
+    log_id: int,
+    request: Request,
+    current_user: User = Depends(require_role(["ADMIN"])),
+    db: Session = Depends(get_db),
+):
+    """Retry sending a previously failed or queued email dispatch (Admin only)."""
+    log = db.query(EmailLog).filter(EmailLog.id == log_id).first()
+    if not log:
+        raise HTTPException(status_code=404, detail="Email log entry not found")
+
+    updated_log = await retry_email(db=db, log=log)
+
+    log_audit_event(
+        db=db,
+        action="EMAIL_RETRIED",
+        resource="EMAIL_LOG",
+        resource_id=log.public_id,
+        user=current_user,
+        detail=f"Email dispatch {log.public_id} retried (attempt #{log.retry_count}) — Status: {log.status}",
+        severity="info",
+        ip_address=get_client_ip(request),
+    )
+
+    return updated_log

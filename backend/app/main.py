@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from app.core.config import settings
 from app.core.database import engine, Base, SessionLocal
-from app.db.seed import seed_database, ensure_playbooks
+from app.db.seed import seed_database, ensure_playbooks, ensure_detection_rules
 from app.routers import (
     auth,
     incidents,
@@ -45,6 +45,7 @@ async def lifespan(app: FastAPI):
     db = SessionLocal()
     try:
         ensure_playbooks(db)
+        ensure_detection_rules(db)
         if settings.DEMO_MODE:
             logger.info("DEMO_MODE enabled — checking database seed state...")
             seed_database(db)

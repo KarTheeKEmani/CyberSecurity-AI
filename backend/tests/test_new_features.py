@@ -403,6 +403,136 @@ class TestEmailNotifications:
         )
         assert r.status_code == 400
 
+    def test_get_notification_recipients(self):
+        token = get_analyst_token()
+        r = client.get("/api/email/recipients", headers={"Authorization": f"Bearer {token}"})
+        assert r.status_code == 200
+        data = r.json()
+        assert "recipients" in data
+        assert isinstance(data["recipients"], list)
+        assert len(data["recipients"]) > 0
+
+    def test_update_notification_recipients_admin(self):
+        token = get_admin_token()
+        new_list = ["alert-soc@test.corp", "lead-analyst@test.corp"]
+        r = client.post(
+            "/api/email/recipients",
+            json={"recipients": new_list},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "updated"
+        assert "alert-soc@test.corp" in data["recipients"]
+
+    def test_update_notification_recipients_requires_admin(self):
+        token = get_analyst_token()
+        r = client.post(
+            "/api/email/recipients",
+            json={"recipients": ["test@example.com"]},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+    def test_retry_email_delivery_admin(self):
+        token = get_admin_token()
+        test_res = client.post(
+            "/api/email/test",
+            json={"recipient": "retry.test@example.com"},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert test_res.status_code == 200
+
+        logs_res = client.get("/api/email/logs", headers={"Authorization": f"Bearer {token}"})
+        logs = logs_res.json()
+        assert len(logs) > 0
+        target_log_id = logs[0]["id"]
+        initial_retries = logs[0]["retry_count"]
+
+        retry_res = client.post(
+            f"/api/email/logs/{target_log_id}/retry",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert retry_res.status_code == 200
+        retried_data = retry_res.json()
+        assert retried_data["retry_count"] == initial_retries + 1
+
+    def test_retry_email_requires_admin(self):
+        analyst_token = get_analyst_token()
+        r = client.post(
+            "/api/email/logs/1/retry",
+            headers={"Authorization": f"Bearer {analyst_token}"},
+        )
+        assert r.status_code == 403
+
+    def test_brute_force_correlation_triggers_incident_and_email(self):
+        target_email = f"brute_victim_{uuid.uuid4().hex[:6]}@example.com"
+        for _ in range(5):
+            client.post("/api/auth/login", json={"email": target_email, "password": "WrongPassword!"})
+
+        admin_token = get_admin_token()
+        incidents_res = client.get(
+            f"/api/incidents?search={target_email}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert incidents_res.status_code == 200
+        data = incidents_res.json()
+        assert data["total"] >= 1
+        found = any("Brute-Force" in inc["title"] for inc in data["incidents"])
+        assert found, f"Expected Brute-Force incident for {target_email}"
+
+        logs_res = client.get("/api/email/logs", headers={"Authorization": f"Bearer {admin_token}"})
+        logs = logs_res.json()
+        assert any("Brute-Force" in l["subject"] for l in logs)
+
+    def test_suspicious_login_after_failures_triggers_incident_and_email(self):
+        unique_user_email = f"user_{uuid.uuid4().hex[:6]}@example.com"
+        reg_res = client.post("/api/auth/register", json={
+            "email": unique_user_email,
+            "full_name": "Test Correlation User",
+            "password": "ValidPassword123!",
+        })
+        assert reg_res.status_code == 201
+
+        for _ in range(3):
+            client.post("/api/auth/login", json={"email": unique_user_email, "password": "BadPassword123!"})
+
+        login_res = client.post("/api/auth/login", json={"email": unique_user_email, "password": "ValidPassword123!"})
+        assert login_res.status_code == 200
+
+        admin_token = get_admin_token()
+        incidents_res = client.get(
+            f"/api/incidents?search={unique_user_email}",
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert incidents_res.status_code == 200
+        data = incidents_res.json()
+        found = any("Suspicious" in inc["title"] for inc in data["incidents"])
+        assert found, f"Expected Suspicious Authentication incident for {unique_user_email}"
+
+    def test_critical_incident_ingest_triggers_email_notification(self):
+        admin_token = get_admin_token()
+        unique_title = f"Critical Ingest Test {uuid.uuid4().hex[:6]}"
+        inc_res = client.post(
+            "/api/incidents",
+            json={
+                "title": unique_title,
+                "description": "Immediate escalation required for critical root exploit.",
+                "severity": "CRITICAL",
+                "category": "Privilege Escalation",
+                "source": "EDR Sensor",
+                "source_ip": "10.0.0.99",
+                "target_system": "CORE-SRV-01",
+            },
+            headers={"Authorization": f"Bearer {admin_token}"},
+        )
+        assert inc_res.status_code == 201
+
+        logs_res = client.get("/api/email/logs", headers={"Authorization": f"Bearer {admin_token}"})
+        logs = logs_res.json()
+        found_email = any(unique_title in l["subject"] or "Critical" in l["subject"] for l in logs)
+        assert found_email, "Expected email dispatch recorded for CRITICAL incident"
+
 
 
 # ============================================================
@@ -517,3 +647,133 @@ class TestDefensivePlaybooks:
         assert "steps" in data and len(data["steps"]) > 0
         assert "risk_level" in data
 
+
+
+# ============================================================
+# PHASE 4: AUTO-ALERT SCHEDULER TESTS
+# ============================================================
+
+class TestAutoAlertScheduler:
+    """Phase 4 - verify the scheduler pause / resume / configure API."""
+
+    def test_scheduler_status_is_accessible_by_analyst(self):
+        """Any authenticated user can GET the scheduler status."""
+        token = get_analyst_token()
+        r = client.get(
+            "/api/alerts/generate/scheduler/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert "running" in data
+        assert "interval_seconds" in data
+        assert "total_generated" in data
+        assert "paused" in data
+
+    def test_scheduler_status_has_expected_fields(self):
+        """Status payload must include paused flag, interval, recipients."""
+        token = get_analyst_token()
+        r = client.get(
+            "/api/alerts/generate/scheduler/status",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        data = r.json()
+        assert isinstance(data["interval_seconds"], int)
+        assert isinstance(data["paused"], bool)
+        assert isinstance(data["total_generated"], int)
+        assert "recipients" in data
+
+    def test_scheduler_pause_requires_admin(self):
+        """Non-admin users must NOT be able to pause the scheduler."""
+        token = get_viewer_token()
+        r = client.post(
+            "/api/alerts/generate/scheduler/pause",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+    def test_scheduler_resume_requires_admin(self):
+        """Non-admin users must NOT be able to resume the scheduler."""
+        token = get_viewer_token()
+        r = client.post(
+            "/api/alerts/generate/scheduler/resume",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+    def test_scheduler_config_requires_admin(self):
+        """Non-admin users must NOT be able to change the interval."""
+        token = get_viewer_token()
+        r = client.patch(
+            "/api/alerts/generate/scheduler/config",
+            json={"interval_seconds": 120},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 403
+
+    def test_scheduler_config_interval_update(self):
+        """Admin can update the interval; response reflects the new value."""
+        token = get_admin_token()
+        r = client.patch(
+            "/api/alerts/generate/scheduler/config",
+            json={"interval_seconds": 90},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        data = r.json()
+        assert data["status"] == "updated"
+        assert data["interval_seconds"] == 90
+
+    def test_scheduler_config_rejects_too_small_interval(self):
+        """Interval below 10 s must be rejected with 422."""
+        token = get_admin_token()
+        r = client.patch(
+            "/api/alerts/generate/scheduler/config",
+            json={"interval_seconds": 5},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_scheduler_config_rejects_too_large_interval(self):
+        """Interval above 3600 s must be rejected with 422."""
+        token = get_admin_token()
+        r = client.patch(
+            "/api/alerts/generate/scheduler/config",
+            json={"interval_seconds": 9999},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 422
+
+    def test_scheduler_pause_and_resume_cycle(self):
+        """Admin can pause the scheduler and resume it; paused flag toggles."""
+        token = get_admin_token()
+
+        # Scheduler starts automatically via app lifespan.
+        # Pause
+        r_pause = client.post(
+            "/api/alerts/generate/scheduler/pause",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r_pause.status_code == 200
+        assert r_pause.json()["status"] == "paused"
+        assert r_pause.json()["paused"] is True
+
+        # Resume
+        r_resume = client.post(
+            "/api/alerts/generate/scheduler/resume",
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r_resume.status_code == 200
+        assert r_resume.json()["status"] == "resumed"
+        assert r_resume.json()["paused"] is False
+
+    def test_scheduler_interval_restored_to_default(self):
+        """Restore interval to 50 s so subsequent runs are not affected."""
+        token = get_admin_token()
+        r = client.patch(
+            "/api/alerts/generate/scheduler/config",
+            json={"interval_seconds": 50},
+            headers={"Authorization": f"Bearer {token}"},
+        )
+        assert r.status_code == 200
+        assert r.json()["interval_seconds"] == 50

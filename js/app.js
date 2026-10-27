@@ -43,6 +43,7 @@ const APP = {
     config: null,
     rules: [],
     logs: [],
+    recipients: [],
     currentTab: 'rules',
     sendingTest: false,
     showModal: false,
@@ -476,12 +477,14 @@ async function fetchChatbotData() {
 async function fetchAlertGenData() {
   APP.loading.alertgen = true;
   try {
-    const [catRes, statusRes] = await Promise.all([
+    const [catRes, statusRes, schedulerRes] = await Promise.all([
       alertGenApi.getCategories().catch(() => ({ categories: [] })),
       alertGenApi.getStatus().catch(() => ({})),
+      alertGenApi.getSchedulerStatus().catch(() => null),
     ]);
     APP.alertGen.categories = catRes.categories || [];
     APP.alertGen.status = statusRes;
+    if (schedulerRes) APP.alertGen.scheduler = schedulerRes;
   } catch (err) {
     console.error('Error fetching alert generator data:', err);
   } finally {
@@ -494,14 +497,16 @@ async function fetchEmailData() {
   try {
     const promises = [
       emailApi.getRules().catch(() => []),
-      emailApi.getLogs(1).catch(() => ({ logs: [], total: 0 })),
+      emailApi.getLogs(1).catch(() => []),
+      emailApi.getRecipients().catch(() => ({ recipients: [] })),
     ];
     if (APP.user && (APP.user.role === 'admin' || APP.user.role === 'lead_analyst')) {
       promises.push(emailApi.getConfig().catch(() => null));
     }
-    const [rules, logsRes, config] = await Promise.all(promises);
-    APP.email.rules = rules || [];
-    APP.email.logs = (logsRes && logsRes.logs) ? logsRes.logs : [];
+    const [rules, logsRes, recRes, config] = await Promise.all(promises);
+    APP.email.rules = Array.isArray(rules) ? rules : [];
+    APP.email.logs = Array.isArray(logsRes) ? logsRes : ((logsRes && logsRes.logs) ? logsRes.logs : []);
+    APP.email.recipients = (recRes && recRes.recipients) ? recRes.recipients : [];
     if (config) APP.email.config = config;
   } catch (err) {
     console.error('Error fetching email data:', err);
@@ -2018,12 +2023,104 @@ function renderDrawerChatFeed(incidentId) {
 // ============================================================
 // PAGE: ALERT GENERATOR & SIMULATOR
 // ============================================================
+
+// --- Phase 4: Scheduler Countdown Timer ---
+let _schedulerCountdownTimer = null;
+
+function _startSchedulerCountdown() {
+  if (_schedulerCountdownTimer) clearInterval(_schedulerCountdownTimer);
+  _schedulerCountdownTimer = setInterval(() => {
+    const el = document.getElementById('scheduler-countdown');
+    const nextEl = document.getElementById('scheduler-next-time');
+    if (!el) { clearInterval(_schedulerCountdownTimer); return; }
+    const sched = APP.alertGen.scheduler || {};
+    if (!sched.running || sched.paused || !sched.next_fire_at) {
+      el.textContent = sched.paused ? 'PAUSED' : '—';
+      return;
+    }
+    const diff = Math.max(0, Math.ceil((new Date(sched.next_fire_at) - Date.now()) / 1000));
+    el.textContent = diff > 0 ? `${diff}s` : 'Firing…';
+    if (nextEl) nextEl.textContent = new Date(sched.next_fire_at).toLocaleTimeString();
+  }, 500);
+}
+
+async function _refreshSchedulerStatus() {
+  try {
+    const s = await alertGenApi.getSchedulerStatus();
+    APP.alertGen.scheduler = s;
+    _updateSchedulerUI(s);
+  } catch (e) { /* silent */ }
+}
+
+function _updateSchedulerUI(sched) {
+  const runningEl   = document.getElementById('sched-status-dot');
+  const labelEl     = document.getElementById('sched-status-label');
+  const pauseBtn    = document.getElementById('btn-sched-pause');
+  const resumeBtn   = document.getElementById('btn-sched-resume');
+  const totalEl     = document.getElementById('sched-total-generated');
+  const intervalEl  = document.getElementById('sched-interval-display');
+
+  if (!sched) return;
+  const isActive = sched.running && !sched.paused;
+
+  if (runningEl) {
+    runningEl.className = `status-dot ${isActive ? 'live' : ''}`;
+    runningEl.style.background = isActive ? 'var(--success)' : (sched.paused ? 'var(--warning)' : 'var(--text-muted)');
+    runningEl.style.boxShadow  = isActive ? '0 0 10px var(--success)' : (sched.paused ? '0 0 8px var(--warning)' : 'none');
+  }
+  if (labelEl) {
+    labelEl.textContent = isActive ? 'RUNNING' : (sched.paused ? 'PAUSED' : 'STOPPED');
+    labelEl.style.color = isActive ? 'var(--success)' : (sched.paused ? 'var(--warning)' : 'var(--text-muted)');
+  }
+  if (pauseBtn)  pauseBtn.style.display  = (sched.running && !sched.paused) ? '' : 'none';
+  if (resumeBtn) resumeBtn.style.display = (sched.running &&  sched.paused) ? '' : 'none';
+  if (totalEl)   totalEl.textContent = sched.total_generated ?? 0;
+  if (intervalEl) intervalEl.textContent = `${sched.interval_seconds}s`;
+}
+
+async function toggleSchedulerPause() {
+  const sched = APP.alertGen.scheduler || {};
+  try {
+    let res;
+    if (sched.paused) {
+      res = await alertGenApi.resumeScheduler();
+      showToast('Auto-Scheduler resumed — alerts will fire every ' + res.interval_seconds + 's', 'success');
+    } else {
+      res = await alertGenApi.pauseScheduler();
+      showToast('Auto-Scheduler paused — no new alerts until resumed', 'info');
+    }
+    APP.alertGen.scheduler = res;
+    _updateSchedulerUI(res);
+  } catch (err) {
+    showToast('Scheduler toggle error: ' + err.message, 'critical');
+  }
+}
+
+async function applySchedulerInterval() {
+  const inp = document.getElementById('sched-interval-input');
+  const val = parseInt(inp?.value || '50', 10);
+  if (isNaN(val) || val < 10 || val > 3600) {
+    showToast('Interval must be 10–3600 seconds', 'critical');
+    return;
+  }
+  try {
+    const res = await alertGenApi.configureScheduler(val);
+    APP.alertGen.scheduler = res;
+    _updateSchedulerUI(res);
+    showToast(`Scheduler interval updated to ${val}s`, 'success');
+  } catch (err) {
+    showToast('Interval update error: ' + err.message, 'critical');
+  }
+}
+
 function renderAlertGen() {
   const page = document.getElementById('page-alertgen');
   if (!page) return;
 
   const cats = APP.alertGen.categories || [];
   const status = APP.alertGen.status || { simulated_incidents_total: 0, scheduler_running: true };
+  const sched = APP.alertGen.scheduler || { running: false, paused: false, interval_seconds: 50, total_generated: 0 };
+  const isActive = sched.running && !sched.paused;
 
   const categoryCards = cats.map(cat => {
     const sev = cat.default_severity || 'HIGH';
@@ -2082,7 +2179,6 @@ function renderAlertGen() {
           Inject realistic MITRE ATT&CK attack vectors directly into the telemetry pipeline, PostgreSQL database, and real-time WebSocket feeds. Perfect for validation of detection rules, triage workflows, and analyst readiness.
         </div>
       </div>
-
       <div style="display:flex;gap:12px;flex-wrap:wrap;">
         <div class="alertgen-kpi-badge">
           <div style="font-size:22px;font-weight:700;font-family:var(--font-mono);color:var(--accent);">${cats.length}</div>
@@ -2093,6 +2189,80 @@ function renderAlertGen() {
           <div style="font-size:11.5px;color:var(--text-muted);line-height:1.2;">Total Simulated<br>Incidents</div>
         </div>
       </div>
+    </div>
+
+    <!-- ═══════════════════════════════════════════
+         PHASE 4 — AUTO-SCHEDULER CONTROL PANEL
+         ═══════════════════════════════════════════ -->
+    <div class="glass-card" style="padding:22px 28px;margin-bottom:24px;border-color:${isActive ? 'rgba(47,212,99,0.35)' : (sched.paused ? 'rgba(251,191,36,0.3)' : 'var(--glass-border)')};">
+      <!-- Panel header -->
+      <div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:16px;margin-bottom:20px;">
+        <div style="display:flex;align-items:center;gap:12px;">
+          <div id="sched-status-dot" class="status-dot ${isActive ? 'live' : ''}"
+               style="width:11px;height:11px;background:${isActive ? 'var(--success)' : (sched.paused ? 'var(--warning)' : 'var(--text-muted)')};box-shadow:${isActive ? '0 0 10px var(--success)' : (sched.paused ? '0 0 8px var(--warning)' : 'none')};"></div>
+          <div>
+            <div style="font-size:15px;font-weight:700;color:var(--text-primary);display:flex;align-items:center;gap:10px;">
+              Auto-Alert Scheduler
+              <span id="sched-status-label" style="font-size:11px;font-family:var(--font-mono);font-weight:700;letter-spacing:0.08em;color:${isActive ? 'var(--success)' : (sched.paused ? 'var(--warning)' : 'var(--text-muted)')};">${isActive ? 'RUNNING' : (sched.paused ? 'PAUSED' : 'STOPPED')}</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Fires a new simulated incident automatically on a configurable interval and dispatches email alerts to the SOC team.</div>
+          </div>
+        </div>
+
+        <!-- Pause / Resume button group -->
+        ${APP.user && APP.user.role === 'admin' ? `
+        <div style="display:flex;align-items:center;gap:10px;">
+          <button id="btn-sched-pause" onclick="toggleSchedulerPause()"
+                  style="display:${sched.running && !sched.paused ? '' : 'none'};"
+                  class="btn btn-secondary" style="gap:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            Pause Scheduler
+          </button>
+          <button id="btn-sched-resume" onclick="toggleSchedulerPause()"
+                  style="display:${sched.running && sched.paused ? '' : 'none'};"
+                  class="btn btn-primary" style="gap:8px;">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
+            Resume Scheduler
+          </button>
+        </div>` : ''}
+      </div>
+
+      <!-- Stats grid -->
+      <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:14px;margin-bottom:20px;">
+        <div style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:6px;">Next Fire In</div>
+          <div id="scheduler-countdown" style="font-family:var(--font-mono);font-size:24px;font-weight:700;color:${isActive ? 'var(--accent)' : 'var(--text-muted)'};"
+          >${isActive ? '…' : (sched.paused ? 'PAUSED' : '—')}</div>
+          <div id="scheduler-next-time" style="font-size:10.5px;color:var(--text-muted);margin-top:3px;">—</div>
+        </div>
+        <div style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:6px;">Current Interval</div>
+          <div id="sched-interval-display" style="font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--text-primary);">${sched.interval_seconds}s</div>
+          <div style="font-size:10.5px;color:var(--text-muted);margin-top:3px;">Between auto-alerts</div>
+        </div>
+        <div style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:6px;">Auto-Generated</div>
+          <div id="sched-total-generated" style="font-family:var(--font-mono);font-size:24px;font-weight:700;color:var(--warning);">${sched.total_generated}</div>
+          <div style="font-size:10.5px;color:var(--text-muted);margin-top:3px;">Since last restart</div>
+        </div>
+        <div style="background:rgba(0,0,0,0.3);border:1px solid var(--glass-border);border-radius:10px;padding:14px 16px;">
+          <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted);margin-bottom:6px;">Email Recipients</div>
+          <div style="font-family:var(--font-mono);font-size:16px;font-weight:700;color:var(--accent-cyan);">${(sched.recipients || []).length}</div>
+          <div style="font-size:10.5px;color:var(--text-muted);margin-top:3px;">SOC team members</div>
+        </div>
+      </div>
+
+      <!-- Interval configurator (admin only) -->
+      ${APP.user && APP.user.role === 'admin' ? `
+      <div style="display:flex;align-items:center;gap:12px;padding-top:16px;border-top:1px solid var(--glass-border);">
+        <div style="font-size:12.5px;color:var(--text-secondary);white-space:nowrap;">Change Interval:</div>
+        <input type="number" id="sched-interval-input" value="${sched.interval_seconds}" min="10" max="3600" step="5"
+               class="form-input" style="width:100px;"
+               onkeydown="if(event.key==='Enter')applySchedulerInterval()"
+               placeholder="Seconds">
+        <button class="btn btn-secondary btn-sm" onclick="applySchedulerInterval()">Apply</button>
+        <span style="font-size:11.5px;color:var(--text-muted);">Range: 10 – 3600 s &nbsp;·&nbsp; Takes effect after the current sleep cycle</span>
+      </div>` : ''}
     </div>
 
     <!-- Batch Generator Form Bar -->
@@ -2168,6 +2338,20 @@ function renderAlertGen() {
       </div>
     </div>
   `;
+
+
+  // Start the live countdown and poll scheduler state every 5 s
+  setTimeout(() => {
+    _startSchedulerCountdown();
+    _refreshSchedulerStatus();
+  }, 100);
+
+  // Clear old interval when navigating away
+  if (!window._schedulerPollTimer) {
+    window._schedulerPollTimer = setInterval(() => {
+      if (APP.currentPage === 'alertgen') _refreshSchedulerStatus();
+    }, 5000);
+  }
 }
 
 async function generateSingleScenario(catKey, sev) {
@@ -2231,6 +2415,14 @@ function renderEmail() {
   const cfg = APP.email.config || { email_enabled: false, demo_mode: true, sender_email: 'alerts@cybersentinel.local' };
   const tab = APP.email.currentTab || 'rules';
 
+  const recipientsList = APP.email.recipients || [];
+  const recipientsChips = recipientsList.map(r => `
+    <span class="badge" style="background:rgba(56,189,248,0.12);color:var(--accent);display:inline-flex;align-items:center;gap:6px;padding:4px 10px;font-size:12px;">
+      ${escapeHtml(r)}
+      <button style="background:none;border:none;color:var(--text-muted);cursor:pointer;font-size:14px;line-height:1;padding:0;" onclick="removeNotificationRecipient('${escapeHtml(r)}')" title="Remove recipient">&times;</button>
+    </span>
+  `).join('');
+
   const rulesHtml = (APP.email.rules || []).map(r => `
     <div class="rule-card">
       <div class="rule-header">
@@ -2266,7 +2458,7 @@ function renderEmail() {
       <td style="font-weight:500;">${escapeHtml(log.recipient)}</td>
       <td>${escapeHtml(log.subject)}</td>
       <td>
-        <span class="status-badge ${log.status === 'SENT' ? 'closed' : log.status === 'SIMULATION' ? 'investigating' : 'open'}">
+        <span class="status-badge ${log.status === 'SENT' || log.status === 'DELIVERED' ? 'closed' : log.status === 'SIMULATION' ? 'investigating' : 'open'}">
           ${log.status}
         </span>
       </td>
@@ -2277,6 +2469,11 @@ function renderEmail() {
       </td>
       <td style="font-family:var(--font-mono);font-size:11px;color:var(--text-dim);" class="truncate" style="max-width:200px;">
         ${escapeHtml(log.provider_response || '—')}
+      </td>
+      <td style="text-align:right;">
+        <button class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;" onclick="retryEmailLog(${log.id})" title="Retry email delivery">
+          ↻ Retry
+        </button>
       </td>
     </tr>
   `).join('');
@@ -2306,6 +2503,20 @@ function renderEmail() {
         <button class="btn btn-secondary btn-sm" id="btn-test-email" onclick="sendTestSecurityEmail()" style="height:36px;">
           Send Test Alert
         </button>
+      </div>
+    </div>
+
+    <!-- Active Recipients Bar -->
+    <div style="background:var(--glass-card);border:1px solid var(--border-subtle);border-radius:var(--radius-lg);padding:14px 18px;margin-bottom:16px;display:flex;flex-wrap:wrap;align-items:center;justify-content:space-between;gap:12px;">
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+        <span style="font-size:13px;font-weight:600;color:var(--text-secondary);display:flex;align-items:center;gap:6px;">
+          <span style="font-size:14px;">✉</span> Active Notification Recipients:
+        </span>
+        ${recipientsChips || '<span style="font-size:12px;color:var(--text-muted);">None configured (using system defaults)</span>'}
+      </div>
+      <div style="display:flex;gap:8px;align-items:center;">
+        <input type="email" id="new-recipient-input" class="form-input" style="width:200px;height:32px;font-size:12px;" placeholder="add.recipient@corp.ai">
+        <button class="btn btn-secondary btn-sm" onclick="addNotificationRecipient()" style="height:32px;">+ Add</button>
       </div>
     </div>
 
@@ -2354,10 +2565,11 @@ function renderEmail() {
                   <th>Status</th>
                   <th>Delivery Mode</th>
                   <th>Provider Response</th>
+                  <th style="text-align:right;">Action</th>
                 </tr>
               </thead>
               <tbody>
-                ${logsRows || '<tr><td colspan="6" style="text-align:center;padding:24px;color:var(--text-muted);">No email logs recorded yet.</td></tr>'}
+                ${logsRows || '<tr><td colspan="7" style="text-align:center;padding:24px;color:var(--text-muted);">No email logs recorded yet.</td></tr>'}
               </tbody>
             </table>
           </div>
@@ -2480,6 +2692,57 @@ async function submitCreateRule() {
       btn.disabled = false;
       btn.textContent = 'Save Rule';
     }
+  }
+}
+
+async function retryEmailLog(logId) {
+  try {
+    const updated = await emailApi.retryLog(logId);
+    showToast(`Email ${updated.public_id} retried — Status: ${updated.status}`, 'info');
+    await fetchEmailData();
+    renderEmail();
+  } catch (err) {
+    showToast(`Retry failed: ${err.message}`, 'critical');
+  }
+}
+
+async function addNotificationRecipient() {
+  const input = document.getElementById('new-recipient-input');
+  const email = (input ? input.value : '').trim().toLowerCase();
+  if (!email || !email.includes('@')) {
+    showToast('Please enter a valid email address', 'warning');
+    return;
+  }
+  const current = [...(APP.email.recipients || [])];
+  if (current.includes(email)) {
+    showToast('Recipient already in list', 'info');
+    return;
+  }
+  current.push(email);
+  try {
+    const res = await emailApi.updateRecipients(current);
+    APP.email.recipients = res.recipients || current;
+    showToast(`Added ${email} to notification recipients`, 'success');
+    if (input) input.value = '';
+    renderEmail();
+  } catch (err) {
+    showToast(`Error updating recipients: ${err.message}`, 'critical');
+  }
+}
+
+async function removeNotificationRecipient(emailToRemove) {
+  const current = (APP.email.recipients || []).filter(r => r !== emailToRemove);
+  if (current.length === 0) {
+    showToast('At least one recipient must remain configured', 'warning');
+    return;
+  }
+  try {
+    const res = await emailApi.updateRecipients(current);
+    APP.email.recipients = res.recipients || current;
+    showToast(`Removed ${emailToRemove}`, 'info');
+    renderEmail();
+  } catch (err) {
+    showToast(`Error updating recipients: ${err.message}`, 'critical');
   }
 }
 
