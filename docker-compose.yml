@@ -1,0 +1,53 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    container_name: aiac_postgres
+    environment:
+      POSTGRES_USER: aiac_user
+      POSTGRES_PASSWORD: aiac_secure_password_2026
+      POSTGRES_DB: aiac_cyber
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aiac_user -d aiac_cyber"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: aiac_backend
+    environment:
+      - DATABASE_URL=postgresql://aiac_user:aiac_secure_password_2026@postgres:5432/aiac_cyber
+      - JWT_SECRET_KEY=super-secret-jwt-key-for-aiac-cyber-soc-2026-production-ready
+      - CORS_ORIGINS=["http://localhost:3000","http://localhost:8000","http://127.0.0.1:8000"]
+      - AI_PROVIDER=mock
+      - DEMO_MODE=true
+      - ENVIRONMENT=production
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: .
+      dockerfile: frontend/Dockerfile
+    container_name: aiac_frontend
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
