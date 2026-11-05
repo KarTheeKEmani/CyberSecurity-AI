@@ -1458,6 +1458,13 @@
       if (e.key === 'Escape' && modal && modal.classList.contains('open')) closeAuthModal();
       if (e.key === 'Enter' && modal && modal.classList.contains('open')) handleLogin();
     });
+
+    // Ensure browser disk cache for /index.html and / is always fresh
+    fetch('/index.html', { cache: 'reload' }).catch(() => {});
+    fetch('/', { cache: 'reload' }).catch(() => {});
+    if (window.location.search) {
+      window.history.replaceState(null, '', '/index.html');
+    }
   </script>
 </body>
 </html>

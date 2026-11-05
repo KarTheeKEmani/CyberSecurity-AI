@@ -520,6 +520,8 @@
   const _origNavigate = window.navigate;
 
   // Keyboard support for topnav items
+  fetch('/index.html', { cache: 'reload' }).catch(() => {});
+  fetch('/', { cache: 'reload' }).catch(() => {});
   document.addEventListener('keydown', (e) => {
     if (e.key === 'Enter' || e.key === ' ') {
       const item = e.target.closest('.topnav-item');
