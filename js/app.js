@@ -39,6 +39,18 @@ const APP = {
     generating: false,
     recentGenerated: [],
   },
+  reports: {
+    loading: false,
+    preview: null,
+    filters: {
+      date_from: '',
+      date_to: '',
+      severity: '',
+      category: '',
+      status: '',
+      is_simulated: ''
+    }
+  },
   email: {
     config: null,
     rules: [],
@@ -91,9 +103,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     const msg = (err.message || '').toLowerCase();
     const isNetworkErr = msg.includes('reachable') || msg.includes('fetch') || msg.includes('network');
     if (!isNetworkErr && (err.status === 401 || msg.includes('401') || msg.includes('expired'))) {
-      ApiClient.clearAuth();
-      window.location.href = 'index.html';
-      return;
+      const storedRaw = localStorage.getItem('cybersentinel_user');
+      if (!storedRaw) {
+        ApiClient.clearAuth();
+        window.location.href = 'index.html';
+        return;
+      }
+      console.info('[Auth] Demo mode active, continuing with session for:', APP.user?.email);
     }
     // Network or offline preview mode: retain stored user and allow dashboard usage
     console.info('Proceeding with stored session for:', APP.user.email);
@@ -108,7 +124,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   await updateSidebarCounts();
 
   // Route to initial page from URL hash or default to overview
-  const validPages = ['overview', 'incidents', 'analytics', 'admin', 'settings', 'chatbot', 'alertgen', 'email'];
+  const validPages = ['overview', 'incidents', 'analytics', 'reports', 'admin', 'settings', 'chatbot', 'alertgen', 'email'];
   const hash = window.location.hash.replace('#', '').trim();
   navigate(validPages.includes(hash) ? hash : 'overview');
 
@@ -317,6 +333,10 @@ async function navigate(page) {
       title: 'Email Notifications & Detection Rules',
       subtitle: 'Incident dispatch triggers, threshold rule configuration, and tamper-evident SMTP delivery logs.',
     },
+    reports: {
+      title: 'Incident Intelligence Reports',
+      subtitle: 'Database-grounded executive reporting, threat analytics, and verifiable CSV & PDF export.',
+    },
   };
 
   const current = pageInfo[page] || { title: 'Security Command Center', subtitle: '' };
@@ -348,6 +368,9 @@ async function navigate(page) {
   } else if (page === 'email') {
     await fetchEmailData();
     renderEmail();
+  } else if (page === 'reports') {
+    await fetchReportsData();
+    renderReports();
   }
 }
 
@@ -456,6 +479,9 @@ async function fetchChatbotData() {
     APP.chatbot.aiConfig = aiConfig;
     if (incRes && incRes.incidents) {
       APP.incidents = incRes.incidents;
+      if (!APP.chatbot.selectedIncidentId && APP.incidents.length > 0) {
+        APP.chatbot.selectedIncidentId = APP.incidents[0].id;
+      }
     }
     if (!APP.chatbot.currentConversationId && APP.chatbot.conversations.length > 0) {
       APP.chatbot.currentConversationId = APP.chatbot.conversations[0].id;
@@ -557,18 +583,29 @@ function severityBadge(sev) {
 
 function statusBadge(status) {
   const st = (status || 'DETECTED').toUpperCase();
-  const map = {
-    DETECTED: { class: 'open', label: 'Detected' },
-    TRIAGED: { class: 'investigating', label: 'Triaged' },
-    INVESTIGATING: { class: 'investigating', label: 'Investigating' },
-    CONTAINMENT_PENDING: { class: 'investigating', label: 'Containment Pending' },
-    CONTAINED: { class: 'investigating', label: 'Contained' },
-    ERADICATED: { class: 'investigating', label: 'Eradicated' },
-    RESOLVED: { class: 'resolved', label: 'Resolved' },
-    CLOSED: { class: 'closed', label: 'Closed' },
+  if (st === 'CONTAINED' || st === 'ERADICATED') {
+    return `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11.5px;font-weight:700;font-family:var(--font-mono);background:rgba(16,185,129,0.22);border:1.5px solid #10B981;color:#34D399;box-shadow:0 0 12px rgba(16,185,129,0.25);">✓ Contained</span>`;
+  }
+  if (st === 'RESOLVED') {
+    return `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11.5px;font-weight:700;font-family:var(--font-mono);background:rgba(47,212,99,0.18);border:1.5px solid #2FD463;color:#2FD463;">✓ Resolved</span>`;
+  }
+  if (st === 'CLOSED') {
+    return `<span style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:6px;font-size:11.5px;font-weight:600;font-family:var(--font-mono);background:rgba(148,163,184,0.15);border:1px solid rgba(148,163,184,0.4);color:#94A3B8;">Closed</span>`;
+  }
+  const labels = {
+    DETECTED: 'Detected',
+    TRIAGED: 'Triaged',
+    INVESTIGATING: 'Investigating',
+    CONTAINMENT_PENDING: 'Pending'
   };
-  const conf = map[st] || { class: 'open', label: st };
-  return `<span class="status-badge ${conf.class}">${conf.label}</span>`;
+  const stepLabel = labels[st] || st;
+  const stepColor = st === 'DETECTED' ? '#FF6B8B' : '#FBBF24';
+  const stepBg = st === 'DETECTED' ? 'rgba(255,51,102,0.16)' : 'rgba(251,191,36,0.16)';
+  const stepBorder = st === 'DETECTED' ? 'rgba(255,51,102,0.45)' : 'rgba(251,191,36,0.45)';
+  return `<span style="display:inline-flex;align-items:center;gap:6px;flex-wrap:wrap;">
+    <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:600;font-family:var(--font-mono);background:${stepBg};border:1px solid ${stepBorder};color:${stepColor};">${stepLabel}</span>
+    <span style="display:inline-flex;align-items:center;gap:4px;padding:3px 8px;border-radius:6px;font-size:11px;font-weight:700;font-family:var(--font-mono);background:rgba(239,68,68,0.2);border:1.5px solid #EF4444;color:#FCA5A5;">✕ Not Contained</span>
+  </span>`;
 }
 
 // ============================================================
@@ -605,16 +642,22 @@ function renderOverview() {
   page.innerHTML = `
     <!-- Top KPI Grid -->
     <div class="kpi-grid">
-      <div class="glass-card kpi-card">
-        <div class="kpi-label">Active Incidents</div>
+      <div class="glass-card kpi-card" style="cursor:pointer;transition:all 0.2s cubic-bezier(0.16,1,0.3,1);" onclick="navigateToAllIncidents()" title="Click to view all incidents in queue">
+        <div class="kpi-label" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Active Incidents</span>
+          <span style="font-size:11px;color:var(--accent);opacity:0.8;">View Queue →</span>
+        </div>
         <div class="kpi-value" style="color:var(--text-primary);">${s.total_incidents}</div>
         <div class="kpi-subtext" style="color:var(--text-secondary);">
           <span style="color:#FF3366;font-weight:600;">${s.critical_incidents} Critical</span> · ${s.high_incidents} High
         </div>
       </div>
 
-      <div class="glass-card kpi-card">
-        <div class="kpi-label">Active Investigations</div>
+      <div class="glass-card kpi-card" style="cursor:pointer;transition:all 0.2s cubic-bezier(0.16,1,0.3,1);" onclick="navigateToInvestigations()" title="Click to view active investigations">
+        <div class="kpi-label" style="display:flex;justify-content:space-between;align-items:center;">
+          <span>Active Investigations</span>
+          <span style="font-size:11px;color:#00D4FF;opacity:0.8;">Filtered View →</span>
+        </div>
         <div class="kpi-value" style="color:#00D4FF;">${s.investigating_incidents}</div>
         <div class="kpi-subtext" style="color:var(--text-secondary);">Triaged across SOC responders</div>
       </div>
@@ -765,17 +808,19 @@ function renderIncidents() {
 
   const rows = (APP.incidents || []).map(inc => `
     <tr class="table-row-hover" onclick="openDrawer(${inc.id})" style="cursor:pointer;">
-      <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent);font-weight:600;">${inc.public_id}</td>
-      <td>
-        <div style="font-weight:600;color:var(--text-primary);">${escapeHtml(inc.title)}</div>
-        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;" class="truncate">${escapeHtml(inc.description || '')}</div>
+      <td style="font-family:var(--font-mono);font-size:12px;color:var(--accent);font-weight:600;white-space:nowrap;">${inc.public_id}</td>
+      <td style="max-width:340px;">
+        <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          <span style="font-weight:600;color:var(--text-primary);">${escapeHtml(inc.title)}</span>
+        </div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:3px;max-width:330px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(inc.description || '')}</div>
       </td>
-      <td>${severityBadge(inc.severity)}</td>
-      <td>${statusBadge(inc.status)}</td>
-      <td style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(inc.category || 'General')}</td>
-      <td style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted);">${escapeHtml(inc.source_ip || '—')}</td>
-      <td style="font-size:12.5px;color:var(--text-secondary);">${escapeHtml(inc.assignee || 'Unassigned')}</td>
-      <td style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted);">${timeAgo(inc.created_at)}</td>
+      <td style="white-space:nowrap;">${statusBadge(inc.status)}</td>
+      <td style="white-space:nowrap;">${severityBadge(inc.severity)}</td>
+      <td style="font-size:12.5px;color:var(--text-secondary);white-space:nowrap;">${escapeHtml(inc.category || 'General')}</td>
+      <td style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;">${escapeHtml(inc.source_ip || '—')}</td>
+      <td style="font-size:12.5px;color:var(--text-secondary);white-space:nowrap;">${escapeHtml(inc.assignee || 'Unassigned')}</td>
+      <td style="font-size:12px;font-family:var(--font-mono);color:var(--text-muted);white-space:nowrap;">${timeAgo(inc.created_at)}</td>
     </tr>
   `).join('');
 
@@ -815,8 +860,8 @@ function renderIncidents() {
             <tr>
               <th>ID</th>
               <th>Incident Indicator & Details</th>
-              <th>Severity</th>
               <th>Status</th>
+              <th>Severity</th>
               <th>Threat Vector</th>
               <th>Origin IP</th>
               <th>Responder</th>
@@ -892,6 +937,7 @@ async function openDrawer(incidentId) {
     `;
 
     renderDrawerBody(inc);
+    loadIncidentTimeline(inc.id);
   } catch (err) {
     bodyEl.innerHTML = `<div style="color:#FF3366;padding:24px;">Error loading incident: ${err.message}</div>`;
   }
@@ -906,6 +952,14 @@ function closeDrawer() {
 function renderDrawerBody(inc) {
   const bodyEl = document.getElementById('drawer-body');
   if (!bodyEl) return;
+  const badgesEl = document.getElementById('drawer-badges');
+  if (badgesEl && inc) {
+    badgesEl.innerHTML = `
+      ${severityBadge(inc.severity)}
+      ${statusBadge(inc.status)}
+      <span style="font-size:11px;padding:3px 8px;border-radius:12px;background:rgba(255,255,255,0.05);color:var(--text-secondary);font-family:var(--font-mono);">${escapeHtml(inc.source || 'Telemetry')}</span>
+    `;
+  }
 
   const rawLogsHtml = (inc.raw_logs || []).map(log => `
     <div style="display:flex;gap:12px;padding:6px 0;border-bottom:1px solid rgba(255,255,255,0.03);font-family:var(--font-mono);font-size:11.5px;">
@@ -963,6 +1017,21 @@ function renderDrawerBody(inc) {
       </div>
     </div>
 
+    <!-- Prominent Colored Containment Status Box -->
+    <div style="margin:16px 24px 0 24px;padding:12px 16px;border-radius:10px;display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;${(inc.status === 'CONTAINED' || inc.status === 'RESOLVED') ? 'background:rgba(16,185,129,0.18);border:2px solid #10B981;color:#34D399;box-shadow:0 4px 18px rgba(16,185,129,0.2);' : 'background:rgba(239,68,68,0.16);border:2px solid #EF4444;color:#FCA5A5;box-shadow:0 4px 18px rgba(239,68,68,0.15);'}">
+      <div style="display:flex;align-items:center;gap:10px;font-weight:700;font-size:13px;font-family:var(--font-mono);">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;background:${(inc.status === 'CONTAINED' || inc.status === 'RESOLVED') ? '#10B981' : '#EF4444'};color:#000;font-weight:900;">
+          ${(inc.status === 'CONTAINED' || inc.status === 'RESOLVED') ? '✓' : '✕'}
+        </span>
+        <span>${(inc.status === 'CONTAINED' || inc.status === 'RESOLVED') ? 'CONTAINED — Threat Isolated & Contained (Simulation Mode)' : 'NOT CONTAINED — Active Threat Requires Containment'}</span>
+      </div>
+      ${(inc.status === 'CONTAINED' || inc.status === 'RESOLVED') ? '' : `
+        <button class="btn-glass-action" style="padding:6px 14px;font-size:12px;" onclick="executeSimulatedPlaybook(${inc.id})">
+          ⚡ Contain Incident Now
+        </button>
+      `}
+    </div>
+
     <div style="padding:24px;">
       <!-- Incident Overview Description -->
       <div style="margin-bottom:24px;">
@@ -1017,6 +1086,17 @@ function renderDrawerBody(inc) {
         </div>
       </div>
 
+      <!-- Lifecycle History & Audit Timeline -->
+      <div style="margin-bottom:24px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+          <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;">Lifecycle Audit Timeline</div>
+          <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:2px 8px;" onclick="loadIncidentTimeline(${inc.id})">Refresh Timeline ↻</button>
+        </div>
+        <div id="drawer-timeline-${inc.id}" style="background:#04060A;border:1px solid var(--glass-border);border-radius:var(--radius-lg);padding:14px 18px;max-height:220px;overflow-y:auto;">
+          <div style="font-size:12px;color:var(--text-muted);">Loading lifecycle timeline...</div>
+        </div>
+      </div>
+
       <!-- SOC Threat Assistant Section (Integrated near bottom of threat interface) -->
       <div class="drawer-assistant-card glass-card" style="margin-bottom:24px;padding:20px;border:1px solid rgba(92,200,255,0.25);border-radius:var(--radius-lg);background:rgba(8,12,18,0.85);">
         <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px;flex-wrap:wrap;gap:8px;">
@@ -1043,6 +1123,9 @@ function renderDrawerBody(inc) {
           <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;" onclick="askDrawerAssistant(${inc.id}, 'Which playbook is appropriate?')">
             ✦ Which playbook is appropriate?
           </button>
+          <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;border-color:rgba(16,185,129,0.35);color:#6EE7B7;" onclick="askDrawerAssistant(${inc.id}, 'Can AI take care of this problem autonomously?')">
+            ⚡ Can AI handle this autonomously?
+          </button>
           <button class="quick-prompt-chip" style="font-size:11.5px;padding:5px 10px;" onclick="askDrawerAssistant(${inc.id}, 'Show related incidents.')">
             ✦ Show related incidents
           </button>
@@ -1068,6 +1151,48 @@ function renderDrawerBody(inc) {
       </div>
     </div>
   `;
+}
+
+async function loadIncidentTimeline(incId) {
+  const container = document.getElementById(`drawer-timeline-${incId}`);
+  if (!container) return;
+  try {
+    const data = await incidentsApi.getTimeline(incId);
+    if (!data.events || !data.events.length) {
+      container.innerHTML = '<div style="font-size:12px;color:var(--text-muted);">No timeline records found.</div>';
+      return;
+    }
+    const html = data.events.map((ev, idx) => {
+      const typeColors = {
+        DETECTION: 'var(--accent)',
+        AI_TRIAGE: 'var(--accent-cyan)',
+        PLAYBOOK_RUN: 'var(--warning)',
+        AUDIT_ACTION: 'var(--text-secondary)',
+        STATUS_CHANGE: 'var(--success)'
+      };
+      const color = typeColors[ev.event_type] || 'var(--text-primary)';
+      const dt = new Date(ev.timestamp).toLocaleString();
+      return `
+        <div style="display:flex;gap:12px;position:relative;padding-bottom:12px;">
+          <div style="display:flex;flex-direction:column;align-items:center;">
+            <div style="width:8px;height:8px;border-radius:50%;background:${color};margin-top:4px;"></div>
+            ${idx < data.events.length - 1 ? `<div style="width:1px;background:var(--glass-border);flex:1;margin-top:2px;"></div>` : ''}
+          </div>
+          <div style="flex:1;">
+            <div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;">
+              <span style="font-size:12px;font-weight:600;color:${color};">${escapeHtml(ev.title)}</span>
+              <span style="font-size:10.5px;color:var(--text-muted);font-family:var(--font-mono);">${dt}</span>
+            </div>
+            <div style="font-size:12px;color:var(--text-secondary);margin-top:2px;line-height:1.4;">${escapeHtml(ev.description)}</div>
+            ${ev.actor ? `<div style="font-size:10.5px;color:var(--text-muted);margin-top:2px;">Actor: ${escapeHtml(ev.actor)}</div>` : ''}
+          </div>
+        </div>
+      `;
+    }).join('');
+    container.innerHTML = html;
+  } catch (err) {
+    container.innerHTML = `<div style="font-size:12px;color:var(--danger);">Failed to load timeline: ${escapeHtml(err.message)}</div>`;
+  }
 }
 
 function renderAIResultCard(ai) {
@@ -1099,8 +1224,8 @@ function renderAIResultCard(ai) {
             <span>🛡</span> Recommended Defensive Playbook
             <span style="font-size:10px;padding:1px 5px;border-radius:3px;background:rgba(255,170,0,0.15);color:#FFAA00;font-family:var(--font-mono);">SIMULATION MODE</span>
           </div>
-          <button class="btn btn-primary btn-sm" style="font-size:11px;padding:4px 10px;" onclick="executeSimulatedPlaybook(${ai.incident_id || APP.currentIncident?.id})">
-            Simulate Containment →
+          <button class="btn ${APP.currentIncident?.status === 'CONTAINED' ? 'btn-secondary' : 'btn-primary'} btn-sm" style="font-size:11px;padding:4px 10px;${APP.currentIncident?.status === 'CONTAINED' ? 'border-color:rgba(47,212,99,0.5);color:#2FD463;' : ''}" onclick="executeSimulatedPlaybook(${ai.incident_id || APP.currentIncident?.id})">
+            ${APP.currentIncident?.status === 'CONTAINED' ? '✓ Contained (Re-run Simulation)' : 'Simulate Containment →'}
           </button>
         </div>
         <div style="font-size:12px;color:var(--text-muted);">
@@ -1139,7 +1264,17 @@ async function executeSimulatedPlaybook(incidentId) {
     await playbooksApi.execute(incidentId, { execution_mode: 'SIMULATION' });
     const updated = await incidentsApi.get(incidentId);
     APP.currentIncident = updated;
+    // Sync incident status in APP.incidents & recentGenerated
+    (APP.incidents || []).forEach(i => { if (i.id == incidentId) i.status = updated.status; });
+    (APP.alertGen?.recentGenerated || []).forEach(i => { if (i.id == incidentId) i.status = updated.status; });
     renderDrawerBody(updated);
+    loadIncidentTimeline(incidentId);
+    updateSidebarCounts();
+    if (APP.currentPage === 'overview') renderOverview();
+    else if (APP.currentPage === 'incidents') renderIncidents();
+    else if (APP.currentPage === 'chatbot') renderChatbot();
+    else if (APP.currentPage === 'alertgen') renderAlertGen();
+    showToast(`Incident ${updated.public_id} marked as CONTAINED`, 'success');
   } catch (err) {
     showToast(`Playbook error: ${err.message}`, 'critical');
   }
@@ -1147,7 +1282,19 @@ async function executeSimulatedPlaybook(incidentId) {
 
 async function handleStatusChange(incidentId, newStatus) {
   try {
-    await incidentsApi.updateStatus(incidentId, newStatus);
+    const updated = await incidentsApi.updateStatus(incidentId, newStatus);
+    (APP.incidents || []).forEach(i => { if (i.id == incidentId) i.status = newStatus; });
+    (APP.alertGen?.recentGenerated || []).forEach(i => { if (i.id == incidentId) i.status = newStatus; });
+    if (APP.currentIncident && APP.currentIncident.id == incidentId) {
+      APP.currentIncident.status = newStatus;
+      renderDrawerBody(APP.currentIncident);
+      loadIncidentTimeline(incidentId);
+    }
+    updateSidebarCounts();
+    if (APP.currentPage === 'overview') renderOverview();
+    else if (APP.currentPage === 'incidents') renderIncidents();
+    else if (APP.currentPage === 'chatbot') renderChatbot();
+    else if (APP.currentPage === 'alertgen') renderAlertGen();
     showToast(`Status updated to ${newStatus}`, 'info');
   } catch (err) {
     showToast(`Status error: ${err.message}`, 'critical');
@@ -1575,29 +1722,85 @@ async function testIntegrationConnectivity(id) {
 // PAGE: AI THREAT ASSISTANT / CHATBOT
 // ============================================================
 function formatChatMarkdown(text) {
+
   if (!text) return '';
+
   let str = escapeHtml(text);
-  // Code blocks: ```...```
-  str = str.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (m, lang, code) => {
-    return `<pre><code>${code.trim()}</code></pre>`;
-  });
-  // Inline code: `...`
-  str = str.replace(/`([^`]+)`/g, '<code>$1</code>');
-  // Bold: **...**
-  str = str.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
-  // Bullet items
-  str = str.replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>');
-  str = str.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
-  str = str.replace(/<\/ul>\s*<ul>/g, '');
-  // Linebreaks outside pre blocks
-  const parts = str.split(/(<pre>[\s\S]*?<\/pre>)/g);
-  for (let i = 0; i < parts.length; i++) {
-    if (!parts[i].startsWith('<pre>')) {
-      parts[i] = parts[i].replace(/\n/g, '<br>');
+
+  // Autonomous action button placeholder [[AUTONOMOUS_BTN:incId:category]]
+
+  str = str.replace(/\[\[AUTONOMOUS_BTN:([^:]+):([^\]]+)\]\]/g, (m, incId, cat) => {
+    const catSafe = cat.replace(/"/g, '&quot;');
+    const targetInc = (APP.incidents || []).find(i => i.id == incId || i.public_id === incId) || (APP.chatbot.selectedIncidentId ? (APP.incidents || []).find(i => i.id == APP.chatbot.selectedIncidentId) : null) || APP.currentIncident;
+    const isContained = targetInc && (targetInc.status === 'CONTAINED' || targetInc.status === 'RESOLVED');
+    if (isContained) {
+      return `<div style="margin-top:14px;padding:12px 16px;border-radius:12px;background:rgba(16,185,129,0.22);border:2px solid #10B981;color:#34D399;font-weight:700;font-size:13px;display:inline-flex;align-items:center;gap:10px;box-shadow:0 4px 20px rgba(16,185,129,0.28);">
+        <span style="display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:50%;background:#10B981;color:#000;font-weight:900;">✓</span>
+        <span>CONTAINED — Incident ${escapeHtml(targetInc.public_id || '#' + targetInc.id)} has been contained (Simulation Mode)</span>
+      </div>`;
     }
+    return `<div style="margin-top:14px;display:flex;flex-direction:column;gap:10px;align-items:flex-start;">
+      <div style="padding:6px 12px;border-radius:8px;background:rgba(239,68,68,0.2);border:1.5px solid #EF4444;color:#FCA5A5;font-size:12px;font-weight:700;font-family:var(--font-mono);">
+        Current Status: ✕ NOT CONTAINED
+      </div>
+      <button class="btn-glass-action" onclick="handleAutonomousPlaybook('${incId}', '${catSafe}')">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        Execute Autonomous Containment (Mark as Contained)
+      </button>
+    </div>`;
+  });
+
+  // Code blocks
+
+  str = str.replace(/```([a-zA-Z0-9_-]*)\n?([\s\S]*?)```/g, (m, lang, code) => {
+
+    return `<pre><code>${code.trim()}</code></pre>`;
+
+  });
+
+  // Inline code
+
+  str = str.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Bold
+
+  str = str.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+
+  // H3 headings: ### ...
+
+  str = str.replace(/^###\s+(.+)$/gm, '<h4 style="font-size:13px;font-weight:700;color:var(--accent-cyan);margin:12px 0 6px;">$1</h4>');
+
+  // Numbered list items
+
+  str = str.replace(/^(\d+)\.\s+(.+)$/gm, '<div style="padding:3px 0 3px 4px;"><span style="color:var(--accent);font-weight:600;margin-right:6px;">$1.</span>$2</div>');
+
+  // Bullet items
+
+  str = str.replace(/^\s*[-*]\s+(.+)$/gm, '<li>$1</li>');
+
+  str = str.replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>');
+
+  str = str.replace(/<\/ul>\s*<ul>/g, '');
+
+  // Linebreaks outside pre/div/ul/h4 blocks
+
+  const parts = str.split(/(<pre>[\s\S]*?<\/pre>|<div[\s\S]*?<\/div>|<ul>[\s\S]*?<\/ul>|<h4[\s\S]*?<\/h4>)/g);
+
+  for (let i = 0; i < parts.length; i++) {
+
+    if (!parts[i].startsWith('<pre>') && !parts[i].startsWith('<div') && !parts[i].startsWith('<ul>') && !parts[i].startsWith('<h4')) {
+
+      parts[i] = parts[i].replace(/\n/g, '<br>');
+
+    }
+
   }
+
   return parts.join('');
+
 }
+
+
 
 function renderChatbot() {
   const page = document.getElementById('page-chatbot');
@@ -1607,9 +1810,10 @@ function renderChatbot() {
   const aiCfg = APP.chatbot.aiConfig || { provider: 'mock', demo_mode: true };
   const isMock = aiCfg.demo_mode || aiCfg.provider === 'mock';
 
+  const selectedIncObj = (APP.incidents || []).find(i => i.id == APP.chatbot.selectedIncidentId) || (APP.currentIncident && APP.currentIncident.id == APP.chatbot.selectedIncidentId ? APP.currentIncident : null);
   const incidentOptions = (APP.incidents || []).map(inc => `
     <option value="${inc.id}" ${APP.chatbot.selectedIncidentId == inc.id ? 'selected' : ''}>
-      ${escapeHtml(inc.public_id)} — ${escapeHtml(inc.title.substring(0, 36))}...
+      ${escapeHtml(inc.public_id)} [${escapeHtml(inc.status || 'DETECTED')}] — ${escapeHtml(inc.title.substring(0, 32))}...
     </option>
   `).join('');
 
@@ -1660,6 +1864,9 @@ function renderChatbot() {
           <button class="quick-prompt-chip" onclick="quickPromptClick('Which playbook is appropriate?')">
             ✦ Which playbook is appropriate?
           </button>
+          <button class="quick-prompt-chip" onclick="quickPromptClick('Can AI take care of this problem autonomously?')" style="border-color:rgba(16,185,129,0.3);color:#6EE7B7;">
+            ⚡ Can AI handle this autonomously?
+          </button>
           <button class="quick-prompt-chip" onclick="quickPromptClick('Show related incidents.')">
             ✦ Show related incidents
           </button>
@@ -1672,6 +1879,12 @@ function renderChatbot() {
       <!-- MAIN CHAT AREA -->
       <div class="chat-main">
         <div class="chat-main-header">
+          <!-- macOS traffic lights -->
+          <div class="macos-traffic-lights">
+            <div class="macos-dot close" title="Close"></div>
+            <div class="macos-dot minimize" title="Minimize"></div>
+            <div class="macos-dot zoom" title="Expand"></div>
+          </div>
           <div class="chat-header-info">
             <div class="chat-bot-avatar">
               <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1694,7 +1907,7 @@ function renderChatbot() {
                 <span style="font-family:var(--font-mono);color:${isMock ? 'var(--warning)' : 'var(--accent)'};font-weight:600;">
                   ${isMock ? '[SIMULATED MOCK AI]' : `[MODEL: ${aiCfg.provider.toUpperCase()}]`}
                 </span>
-                ${APP.chatbot.selectedIncidentId ? `· <span style="color:var(--accent-cyan);font-family:var(--font-mono);">Context: Inc #${APP.chatbot.selectedIncidentId}</span>` : ''}
+                ${APP.chatbot.selectedIncidentId ? `· <span style="color:var(--accent-cyan);font-family:var(--font-mono);">Context: ${selectedIncObj ? escapeHtml(selectedIncObj.public_id) : 'Inc #' + APP.chatbot.selectedIncidentId}</span> · ${statusBadge(selectedIncObj ? selectedIncObj.status : 'DETECTED')}` : ''}
               </div>
             </div>
           </div>
@@ -2157,6 +2370,7 @@ function renderAlertGen() {
         <span class="badge" style="background:rgba(251,191,36,0.12);color:var(--warning);font-size:10px;margin-left:6px;">SIMULATED</span>
       </td>
       <td>${severityBadge(inc.severity)}</td>
+      <td>${statusBadge(inc.status || 'DETECTED')}</td>
       <td style="font-family:var(--font-mono);font-size:12px;">${escapeHtml(inc.source)}</td>
       <td style="font-family:var(--font-mono);font-size:12px;color:var(--text-muted);">${escapeHtml(inc.target_system || '—')}</td>
       <td style="color:var(--text-muted);font-size:11.5px;">${timeAgo(inc.created_at)}</td>
@@ -2324,6 +2538,7 @@ function renderAlertGen() {
                 <th>Incident ID</th>
                 <th>Title / Attack Pattern</th>
                 <th>Severity</th>
+                <th>Status</th>
                 <th>Source</th>
                 <th>Target Asset</th>
                 <th>Generated</th>
@@ -2893,3 +3108,376 @@ function escapeHtml(str) {
     .replace(/'/g, '&#039;');
 }
 
+
+
+// ============================================================
+// PAGE: INCIDENT REPORTS & INTELLIGENCE EXPORT
+// ============================================================
+
+async function fetchReportsData() {
+  APP.reports.loading = true;
+  try {
+    const preview = await reportsApi.getPreview(APP.reports.filters);
+    APP.reports.preview = preview;
+  } catch (err) {
+    console.error('[Reports] Error loading preview:', err);
+    APP.reports.preview = null;
+  } finally {
+    APP.reports.loading = false;
+  }
+}
+
+async function applyReportFilters() {
+  const sev = document.getElementById('rep-filter-sev')?.value || '';
+  const cat = document.getElementById('rep-filter-cat')?.value || '';
+  const st = document.getElementById('rep-filter-status')?.value || '';
+  const sim = document.getElementById('rep-filter-sim')?.value || '';
+  const dFrom = document.getElementById('rep-filter-from')?.value || '';
+  const dTo = document.getElementById('rep-filter-to')?.value || '';
+
+  APP.reports.filters = {
+    severity: sev,
+    category: cat,
+    status: st,
+    is_simulated: sim,
+    date_from: dFrom ? new Date(dFrom).toISOString() : '',
+    date_to: dTo ? new Date(dTo).toISOString() : ''
+  };
+
+  const page = document.getElementById('page-reports');
+  if (page) {
+    page.innerHTML = '<div style="padding:32px;text-align:center;color:var(--text-muted);"><span class="status-dot live"></span> Generating intelligence report from database records...</div>';
+  }
+  await fetchReportsData();
+  renderReports();
+}
+
+async function resetReportFilters() {
+  APP.reports.filters = {
+    date_from: '',
+    date_to: '',
+    severity: '',
+    category: '',
+    status: '',
+    is_simulated: ''
+  };
+  await fetchReportsData();
+  renderReports();
+}
+
+async function downloadReportCsv() {
+  try {
+    const btn = document.getElementById('btn-export-csv');
+    if (btn) { btn.disabled = true; btn.textContent = 'Exporting CSV...'; }
+    const url = reportsApi.getCsvUrl(APP.reports.filters);
+    const token = ApiClient.getToken();
+    const res = await fetch(url, { headers: { Authorization: `Bearer ${token}` } });
+    if (!res.ok) throw new Error(`HTTP ${res.status}: Failed to generate CSV`);
+    const blob = await res.blob();
+    const blobUrl = window.URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = `cybersentinel_incident_report_${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.URL.revokeObjectURL(blobUrl);
+    if (btn) { btn.disabled = false; btn.innerHTML = '📥 Export CSV'; }
+  } catch (err) {
+    alert('Error exporting CSV: ' + err.message);
+    const btn = document.getElementById('btn-export-csv');
+    if (btn) { btn.disabled = false; btn.innerHTML = '📥 Export CSV'; }
+  }
+}
+
+function openReportHtmlPrint() {
+  const url = reportsApi.getHtmlUrl(APP.reports.filters);
+  window.open(url, '_blank');
+}
+
+function renderReports() {
+  const container = document.getElementById('page-reports');
+  if (!container) return;
+
+  const data = APP.reports.preview;
+  const f = APP.reports.filters;
+
+  if (!data) {
+    container.innerHTML = `
+      <div class="glass-card" style="padding:36px;text-align:center;">
+        <div style="font-size:16px;font-weight:600;color:var(--text-primary);margin-bottom:8px;">Failed to Load Report Preview</div>
+        <div style="font-size:13px;color:var(--text-muted);margin-bottom:18px;">Could not retrieve incident history from the database.</div>
+        <button class="btn btn-primary btn-sm" onclick="fetchReportsData().then(renderReports)">Retry ↻</button>
+      </div>
+    `;
+    return;
+  }
+
+  const critCount = data.severity_distribution?.CRITICAL || 0;
+  const highCount = data.severity_distribution?.HIGH || 0;
+  const medCount = data.severity_distribution?.MEDIUM || 0;
+  const lowCount = data.severity_distribution?.LOW || 0;
+
+  // Categories breakdown chips
+  const catEntries = Object.entries(data.category_distribution || {}).sort((a,b) => b[1] - a[1]);
+  const catChips = catEntries.map(([c, count]) => `
+    <span style="display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border-radius:999px;background:rgba(255,255,255,0.04);border:1px solid var(--glass-border);font-size:11.5px;color:var(--text-secondary);">
+      <span style="font-weight:600;color:var(--text-primary);">${escapeHtml(c)}</span>
+      <span style="color:var(--accent);font-family:var(--font-mono);font-size:11px;">${count}</span>
+    </span>
+  `).join('');
+
+  // Incidents Rows
+  const rows = data.incidents.map(inc => {
+    const isSim = inc.is_simulated;
+    const simBadge = isSim
+      ? `<span class="badge" style="background:rgba(255,153,0,0.15);color:var(--warning);border:1px solid rgba(255,153,0,0.3);font-size:10px;">SIMULATED</span>`
+      : `<span class="badge" style="background:rgba(47,212,99,0.15);color:var(--success);border:1px solid rgba(47,212,99,0.3);font-size:10px;">EXTERNAL</span>`;
+    
+    return `
+      <tr>
+        <td style="font-family:var(--font-mono);font-weight:600;color:var(--accent);">
+          <a href="javascript:void(0)" onclick="openDrawer(${inc.id})" style="color:var(--accent);text-decoration:none;">
+            ${escapeHtml(inc.public_id)}
+          </a>
+        </td>
+        <td>
+          <div style="font-weight:600;color:var(--text-primary);">${escapeHtml(inc.title)}</div>
+          <div style="font-size:11px;color:var(--text-muted);margin-top:2px;">
+            Target: <code style="color:var(--text-secondary);">${escapeHtml(inc.target_system)}</code> • Origin: <code style="color:var(--text-secondary);">${escapeHtml(inc.source_ip)}</code>
+          </div>
+        </td>
+        <td>${severityBadge(inc.severity)}</td>
+        <td>${statusBadge(inc.status)}</td>
+        <td>${simBadge}</td>
+        <td style="font-size:11.5px;color:var(--text-secondary);">${escapeHtml(inc.ai_classification || 'Pending Triage')}</td>
+        <td style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">${new Date(inc.detected_at).toLocaleString()}</td>
+        <td>
+          <button class="btn btn-secondary btn-sm" style="font-size:11px;padding:3px 8px;" onclick="openDrawer(${inc.id})">
+            Investigate ↗
+          </button>
+        </td>
+      </tr>
+    `;
+  }).join('');
+
+  container.innerHTML = `
+    <!-- Top Action Bar -->
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:20px;flex-wrap:wrap;gap:12px;">
+      <div>
+        <div style="font-size:18px;font-weight:700;color:var(--text-primary);letter-spacing:-0.02em;">Incident Intelligence & Compliance Reports</div>
+        <div style="font-size:12px;color:var(--text-muted);margin-top:2px;">Audit-verified reporting grounded directly in database records.</div>
+      </div>
+      <div style="display:flex;gap:10px;">
+        <button class="btn btn-secondary btn-sm" id="btn-export-csv" onclick="downloadReportCsv()" style="display:inline-flex;align-items:center;gap:6px;">
+          📥 Export CSV
+        </button>
+        <button class="btn btn-primary btn-sm" onclick="openReportHtmlPrint()" style="display:inline-flex;align-items:center;gap:6px;">
+          🖨 Print / PDF View
+        </button>
+      </div>
+    </div>
+
+    <!-- Filter Console -->
+    <div class="glass-card" style="padding:16px 20px;margin-bottom:24px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:12px;">
+        Report Scope & Filters
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(150px, 1fr));gap:12px;align-items:flex-end;">
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Severity</label>
+          <select id="rep-filter-sev" class="form-select" style="font-size:12px;padding:6px 10px;height:34px;">
+            <option value="" ${!f.severity ? 'selected' : ''}>All Severities</option>
+            <option value="CRITICAL" ${f.severity === 'CRITICAL' ? 'selected' : ''}>Critical (P1)</option>
+            <option value="HIGH" ${f.severity === 'HIGH' ? 'selected' : ''}>High (P2)</option>
+            <option value="MEDIUM" ${f.severity === 'MEDIUM' ? 'selected' : ''}>Medium (P3)</option>
+            <option value="LOW" ${f.severity === 'LOW' ? 'selected' : ''}>Low (P4)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Status</label>
+          <select id="rep-filter-status" class="form-select" style="font-size:12px;padding:6px 10px;height:34px;">
+            <option value="" ${!f.status ? 'selected' : ''}>All Statuses</option>
+            <option value="DETECTED" ${f.status === 'DETECTED' ? 'selected' : ''}>Detected</option>
+            <option value="INVESTIGATING" ${f.status === 'INVESTIGATING' ? 'selected' : ''}>Investigating</option>
+            <option value="CONTAINED" ${f.status === 'CONTAINED' ? 'selected' : ''}>Contained</option>
+            <option value="RESOLVED" ${f.status === 'RESOLVED' ? 'selected' : ''}>Resolved</option>
+            <option value="CLOSED" ${f.status === 'CLOSED' ? 'selected' : ''}>Closed</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Provenance</label>
+          <select id="rep-filter-sim" class="form-select" style="font-size:12px;padding:6px 10px;height:34px;">
+            <option value="" ${f.is_simulated === '' ? 'selected' : ''}>All Incidents</option>
+            <option value="false" ${f.is_simulated === 'false' ? 'selected' : ''}>External Only</option>
+            <option value="true" ${f.is_simulated === 'true' ? 'selected' : ''}>Simulated Only</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Date From</label>
+          <input type="date" id="rep-filter-from" class="form-input" style="font-size:12px;padding:6px 10px;height:34px;" value="${f.date_from ? f.date_from.split('T')[0] : ''}">
+        </div>
+        <div>
+          <label style="font-size:11px;color:var(--text-muted);display:block;margin-bottom:4px;">Date To</label>
+          <input type="date" id="rep-filter-to" class="form-input" style="font-size:12px;padding:6px 10px;height:34px;" value="${f.date_to ? f.date_to.split('T')[0] : ''}">
+        </div>
+        <div style="display:flex;gap:6px;">
+          <button class="btn btn-primary btn-sm" onclick="applyReportFilters()" style="height:34px;flex:1;">
+            Apply ↻
+          </button>
+          <button class="btn btn-secondary btn-sm" onclick="resetReportFilters()" style="height:34px;">
+            Reset
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Executive Summary Card -->
+    <div class="glass-card" style="padding:22px;margin-bottom:24px;border-left:4px solid var(--accent);">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;flex-wrap:wrap;gap:8px;">
+        <div style="font-size:13px;font-weight:700;color:var(--accent);text-transform:uppercase;letter-spacing:0.04em;">
+          Executive Intelligence Summary • ${escapeHtml(data.reporting_period)}
+        </div>
+        <span style="font-size:11px;color:var(--text-muted);font-family:var(--font-mono);">
+          Generated by: ${escapeHtml(data.generated_by)}
+        </span>
+      </div>
+      <div style="font-size:14px;color:var(--text-primary);line-height:1.6;margin-bottom:12px;">
+        ${escapeHtml(data.executive_summary)}
+      </div>
+      <div style="font-size:11.5px;color:var(--warning);background:rgba(255,153,0,0.08);padding:8px 12px;border-radius:6px;border:1px solid rgba(255,153,0,0.2);">
+        ⚠️ ${escapeHtml(data.simulation_disclaimer)}
+      </div>
+    </div>
+
+    <!-- Metrics Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(180px, 1fr));gap:14px;margin-bottom:24px;">
+      <div class="glass-card" style="padding:16px;text-align:center;">
+        <div style="font-size:26px;font-weight:700;color:var(--text-primary);font-family:var(--font-mono);">${data.total_incidents}</div>
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-top:4px;">Total In Scope</div>
+      </div>
+      <div class="glass-card" style="padding:16px;text-align:center;">
+        <div style="font-size:26px;font-weight:700;color:var(--danger);font-family:var(--font-mono);">${critCount}</div>
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-top:4px;">Critical (P1)</div>
+      </div>
+      <div class="glass-card" style="padding:16px;text-align:center;">
+        <div style="font-size:26px;font-weight:700;color:var(--warning);font-family:var(--font-mono);">${highCount}</div>
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-top:4px;">High (P2)</div>
+      </div>
+      <div class="glass-card" style="padding:16px;text-align:center;">
+        <div style="font-size:26px;font-weight:700;color:var(--success);font-family:var(--font-mono);">${data.avg_resolution_hours}h</div>
+        <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-top:4px;">Mean Resolution Time</div>
+      </div>
+    </div>
+
+    <!-- Attack Vectors & Category Distribution -->
+    <div class="glass-card" style="padding:18px;margin-bottom:24px;">
+      <div style="font-size:12px;font-weight:600;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;">
+        Observed Threat Categories & Vectors
+      </div>
+      <div style="display:flex;flex-wrap:wrap;gap:8px;">
+        ${catChips || '<span style="font-size:12px;color:var(--text-muted);">No categories recorded.</span>'}
+      </div>
+    </div>
+
+    <!-- Incident Inventory Table -->
+    <div class="glass-card" style="padding:20px;margin-bottom:24px;overflow-x:auto;">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;">
+        <div style="font-size:13.5px;font-weight:600;color:var(--text-primary);">
+          Filtered Incident Telemetry Records (${data.incidents.length})
+        </div>
+      </div>
+      <table class="data-table" style="width:100%;font-size:12.5px;">
+        <thead>
+          <tr>
+            <th>ID</th>
+            <th>Title &amp; Target</th>
+            <th>Severity</th>
+            <th>Status</th>
+            <th>Provenance</th>
+            <th>AI Triage</th>
+            <th>Detection Time</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${rows || '<tr><td colspan="8" style="text-align:center;padding:24px;color:var(--text-muted);">No matching incident records found.</td></tr>'}
+        </tbody>
+      </table>
+    </div>
+
+    <!-- Recommendations -->
+    <div class="glass-card" style="padding:20px;border-left:4px solid var(--accent-cyan);">
+      <div style="font-size:13px;font-weight:600;color:var(--accent-cyan);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:10px;">
+        Strategic Defensive Recommendations
+      </div>
+      <ul style="padding-left:20px;font-size:13px;color:var(--text-secondary);line-height:1.7;">
+        ${(data.recommendations || []).map(r => `<li>${escapeHtml(r)}</li>`).join('')}
+      </ul>
+    </div>
+  `;
+}
+
+// ============================================================
+// KPI Card Navigation Helpers (Overview Dashboard)
+// ============================================================
+function navigateToInvestigations() {
+  APP.filters = APP.filters || {};
+  APP.filters.status = 'INVESTIGATING';
+  APP.filters.search = '';
+  APP.filters.severity = '';
+  navigate('incidents');
+}
+
+function navigateToAllIncidents() {
+  APP.filters = APP.filters || {};
+  APP.filters.status = '';
+  APP.filters.search = '';
+  APP.filters.severity = '';
+  navigate('incidents');
+}
+
+// ============================================================
+// Chat: Autonomous Remediation Button Click Handler
+// ============================================================
+async function handleAutonomousPlaybook(incidentId, category) {
+  let resolvedId = incidentId;
+  if (isNaN(Number(incidentId))) {
+    const match = (APP.incidents || []).find(i => i.public_id === incidentId);
+    resolvedId = match ? match.id : (APP.chatbot.selectedIncidentId || APP.currentIncident?.id || (APP.incidents && APP.incidents[0]?.id));
+  }
+  if (!resolvedId) return;
+  const confirmMsg = `⚡ SIMULATION ONLY — No real system changes will occur.\n\nProceed with autonomous containment simulation for ${category} on Incident #${resolvedId}?`;
+  if (!confirm(confirmMsg)) return;
+  try {
+    showToast('Executing autonomous containment simulation...', 'info');
+    const res = await playbooksApi.execute(resolvedId, { execution_mode: 'SIMULATION' });
+    const updatedInc = await incidentsApi.get(resolvedId);
+    (APP.incidents || []).forEach(i => { if (i.id == resolvedId) i.status = updatedInc.status; });
+    (APP.alertGen?.recentGenerated || []).forEach(i => { if (i.id == resolvedId) i.status = updatedInc.status; });
+    if (APP.currentIncident && APP.currentIncident.id == resolvedId) {
+      APP.currentIncident = updatedInc;
+      renderDrawerBody(updatedInc);
+    }
+    showToast(`Autonomous simulation complete for incident #${incidentId}`, 'success');
+    const summaryMsg = {
+      role: 'assistant',
+      content: `**[AUTONOMOUS REMEDIATION — SIMULATION COMPLETE]**\n\n- **Incident ID**: #${incidentId}\n- **Playbook**: ${res.playbook_name || category}\n- **Execution Mode**: SIMULATION ONLY (Zero production impact)\n- **Status**: All containment steps verified and logged to audit trail.`,
+      is_mock: true,
+      created_at: new Date().toISOString()
+    };
+    if (APP.currentPage === 'chatbot') {
+      APP.chatbot.messages.push(summaryMsg);
+      renderChatbot();
+      renderChatMessages();
+    }
+    if (APP.drawerChat && APP.drawerChat[incidentId]) {
+      APP.drawerChat[incidentId].messages.push(summaryMsg);
+      renderDrawerChatFeed(incidentId);
+      loadIncidentTimeline(incidentId);
+    }
+    updateSidebarCounts();
+  } catch (err) {
+    showToast(`Autonomous simulation error: ${err.message}`, 'critical');
+  }
+}

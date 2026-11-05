@@ -2646,3 +2646,270 @@ input:checked + .rule-slider:before {
     transform: translateX(0) scale(1);
   }
 }
+
+
+/* ============================================================
+   macOS & iOS Apple Liquid Glass Theme for AI Chatbot
+   ============================================================ */
+.chatbot-container {
+  display: grid;
+  grid-template-columns: 310px 1fr;
+  gap: 22px;
+  height: calc(100vh - var(--topnav-h) - 70px);
+  min-height: 600px;
+}
+
+@media (max-width: 900px) {
+  .chatbot-container {
+    grid-template-columns: 1fr;
+    height: auto;
+  }
+}
+
+.chat-sidebar {
+  display: flex;
+  flex-direction: column;
+  background: rgba(18, 24, 38, 0.6) !important;
+  backdrop-filter: blur(32px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(32px) saturate(200%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  border-radius: 22px !important;
+  padding: 18px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.18) !important;
+  overflow: hidden;
+}
+
+.chat-sidebar-btn {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 11px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 14px;
+  border: 1px solid rgba(0, 122, 255, 0.35);
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.18), rgba(88, 86, 214, 0.18));
+  color: #60A5FA;
+  cursor: pointer;
+  transition: all 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+  backdrop-filter: blur(12px);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.2), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+}
+
+.chat-sidebar-btn:hover {
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.35), rgba(88, 86, 214, 0.35));
+  border-color: rgba(0, 122, 255, 0.65);
+  transform: translateY(-1px);
+  box-shadow: 0 4px 16px rgba(0, 122, 255, 0.35);
+}
+
+.chat-thread-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.chat-thread-item:hover {
+  background: rgba(255, 255, 255, 0.085);
+  border-color: rgba(255, 255, 255, 0.14);
+  transform: translateX(2px);
+}
+
+.chat-thread-item.active {
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.25), rgba(10, 132, 255, 0.18));
+  border-color: rgba(0, 122, 255, 0.45);
+  box-shadow: 0 4px 16px rgba(0, 122, 255, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.18);
+}
+
+.quick-prompt-chip {
+  display: block;
+  width: 100%;
+  text-align: left;
+  font-size: 11.5px;
+  color: #cbd5e1;
+  background: rgba(255, 255, 255, 0.045);
+  backdrop-filter: blur(12px);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 12px;
+  padding: 8px 12px;
+  margin-bottom: 6px;
+  cursor: pointer;
+  transition: all 0.22s cubic-bezier(0.16, 1, 0.3, 1);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-prompt-chip:hover {
+  color: #93C5FD;
+  background: rgba(0, 122, 255, 0.2);
+  border-color: rgba(0, 122, 255, 0.4);
+  transform: translateX(3px);
+  box-shadow: 0 2px 10px rgba(0, 122, 255, 0.2);
+}
+
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  background: rgba(16, 22, 36, 0.65) !important;
+  backdrop-filter: blur(34px) saturate(200%) !important;
+  -webkit-backdrop-filter: blur(34px) saturate(200%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 22px !important;
+  box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.18) !important;
+  overflow: hidden;
+  position: relative;
+}
+
+.chat-main-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 14px 22px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.09);
+  background: rgba(24, 30, 48, 0.5);
+  backdrop-filter: blur(24px);
+}
+
+.macos-traffic-lights {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  margin-right: 14px;
+  padding-right: 14px;
+  border-right: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+.macos-dot {
+  width: 11px;
+  height: 11px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.2);
+}
+
+.macos-dot.close { background: #FF5F56; }
+.macos-dot.minimize { background: #FFBD2E; }
+.macos-dot.zoom { background: #27C93F; }
+
+.chat-message-row.user .chat-message-bubble {
+  background: linear-gradient(135deg, rgba(0, 122, 255, 0.9), rgba(0, 81, 213, 0.95)) !important;
+  border: 1px solid rgba(255, 255, 255, 0.25) !important;
+  color: #ffffff !important;
+  border-radius: 20px 20px 4px 20px !important;
+  box-shadow: 0 6px 20px rgba(0, 122, 255, 0.35), inset 0 1px 1px rgba(255, 255, 255, 0.35) !important;
+  backdrop-filter: blur(14px);
+}
+
+.chat-message-row.assistant .chat-message-bubble {
+  background: rgba(28, 36, 56, 0.68) !important;
+  border: 1px solid rgba(255, 255, 255, 0.13) !important;
+  color: #f1f5f9 !important;
+  border-radius: 20px 20px 20px 4px !important;
+  box-shadow: 0 10px 32px rgba(0, 0, 0, 0.32), inset 0 1px 1px rgba(255, 255, 255, 0.16) !important;
+  backdrop-filter: blur(26px) saturate(190%) !important;
+}
+
+.chat-input-area {
+  padding: 16px 22px !important;
+  border-top: 1px solid rgba(255, 255, 255, 0.1) !important;
+  background: rgba(18, 24, 38, 0.68) !important;
+  backdrop-filter: blur(30px) saturate(190%) !important;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.chat-textarea {
+  flex: 1;
+  min-height: 46px;
+  max-height: 140px;
+  resize: none;
+  background: rgba(255, 255, 255, 0.07) !important;
+  border: 1px solid rgba(255, 255, 255, 0.15) !important;
+  border-radius: 18px !important;
+  padding: 12px 16px !important;
+  font-family: var(--font-sans);
+  font-size: 13.5px;
+  color: var(--text-primary) !important;
+  outline: none;
+  transition: all 0.2s ease;
+  backdrop-filter: blur(14px);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.25);
+}
+
+.chat-textarea:focus {
+  border-color: rgba(0, 122, 255, 0.5) !important;
+  box-shadow: 0 0 0 3px rgba(0, 122, 255, 0.2), inset 0 1px 2px rgba(0, 0, 0, 0.25) !important;
+  background: rgba(255, 255, 255, 0.09) !important;
+}
+
+.chat-send-btn {
+  height: 46px !important;
+  padding: 0 22px !important;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-weight: 600;
+  border-radius: 18px !important;
+  border: none !important;
+  background: linear-gradient(135deg, #007AFF 0%, #00C6FF 100%) !important;
+  color: #fff !important;
+  cursor: pointer;
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1) !important;
+  box-shadow: 0 4px 18px rgba(0, 122, 255, 0.45), inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+}
+
+.chat-send-btn:hover:not(:disabled) {
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 6px 24px rgba(0, 122, 255, 0.55), inset 0 1px 1px rgba(255, 255, 255, 0.3) !important;
+}
+
+.btn-glass-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 18px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 14px;
+  border: 1px solid rgba(16, 185, 129, 0.45);
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.22), rgba(5, 150, 105, 0.32));
+  color: #34D399;
+  cursor: pointer;
+  backdrop-filter: blur(16px);
+  box-shadow: 0 4px 16px rgba(16, 185, 129, 0.25), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.btn-glass-action:hover {
+  background: linear-gradient(135deg, rgba(16, 185, 129, 0.35), rgba(5, 150, 105, 0.48));
+  border-color: rgba(16, 185, 129, 0.7);
+  transform: translateY(-1px) scale(1.02);
+  box-shadow: 0 6px 22px rgba(16, 185, 129, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.3);
+}
+
+/* KPI Card Interactive Hover & Drawer Assistant Glass Polish */
+.kpi-card[onclick] {
+  transition: transform 0.22s cubic-bezier(0.16, 1, 0.3, 1), border-color 0.22s ease, box-shadow 0.22s ease;
+}
+.kpi-card[onclick]:hover {
+  transform: translateY(-3px);
+  border-color: rgba(92, 200, 255, 0.45) !important;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.45), 0 0 20px rgba(92, 200, 255, 0.14);
+}
+.drawer-assistant-card {
+  background: linear-gradient(145deg, rgba(20, 28, 44, 0.72), rgba(10, 14, 24, 0.85)) !important;
+  backdrop-filter: blur(28px) saturate(190%) !important;
+  -webkit-backdrop-filter: blur(28px) saturate(190%) !important;
+  border: 1px solid rgba(255, 255, 255, 0.14) !important;
+  border-radius: 20px !important;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.18) !important;
+}

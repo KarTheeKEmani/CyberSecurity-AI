@@ -57,9 +57,12 @@ class ApiClient {
           headers['Authorization'] = `Bearer ${this.getToken()}`;
           return await (await fetch(url, { ...options, headers })).json();
         } else {
-          this.clearAuth();
-          if (!window.location.pathname.endsWith('index.html') && !window.location.pathname.endsWith('/')) {
-            window.location.href = 'index.html';
+          const storedUser = this.getStoredUser();
+          if (!storedUser) {
+            this.clearAuth();
+            if (!window.location.pathname.endsWith('index.html') && !window.location.pathname.endsWith('/')) {
+              window.location.href = 'index.html';
+            }
           }
           throw new Error('Session expired. Please log in again.');
         }
@@ -143,9 +146,15 @@ const incidentsApi = {
     if (params.category) q.append('category', params.category);
     if (params.assignee) q.append('assignee', params.assignee);
     if (params.search) q.append('search', params.search);
+    if (params.date_from) q.append('date_from', params.date_from);
+    if (params.date_to) q.append('date_to', params.date_to);
+    if (params.is_simulated !== undefined && params.is_simulated !== null && params.is_simulated !== '') {
+      q.append('is_simulated', params.is_simulated);
+    }
     return ApiClient.request(`/incidents?${q.toString()}`);
   },
   get: (id) => ApiClient.request(`/incidents/${id}`),
+  getTimeline: (id) => ApiClient.request(`/incidents/${id}/timeline`),
   create: (data) => ApiClient.request('/incidents', {
     method: 'POST',
     body: JSON.stringify(data),
@@ -287,3 +296,50 @@ const notificationsApi = {
   markAllRead: () => ApiClient.request('/notifications/mark-all-read', { method: 'POST' }),
   markRead: (id) => ApiClient.request(`/notifications/${id}/read`, { method: 'PATCH' }),
 };
+
+const reportsApi = {
+  getPreview: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.incident_id) q.append('incident_id', params.incident_id);
+    if (params.date_from) q.append('date_from', params.date_from);
+    if (params.date_to) q.append('date_to', params.date_to);
+    if (params.severity) q.append('severity', params.severity);
+    if (params.category) q.append('category', params.category);
+    if (params.status) q.append('status', params.status);
+    if (params.is_simulated !== undefined && params.is_simulated !== null && params.is_simulated !== '') {
+      q.append('is_simulated', params.is_simulated);
+    }
+    return ApiClient.request(`/reports/preview?${q.toString()}`);
+  },
+  getCsvUrl: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.incident_id) q.append('incident_id', params.incident_id);
+    if (params.date_from) q.append('date_from', params.date_from);
+    if (params.date_to) q.append('date_to', params.date_to);
+    if (params.severity) q.append('severity', params.severity);
+    if (params.category) q.append('category', params.category);
+    if (params.status) q.append('status', params.status);
+    if (params.is_simulated !== undefined && params.is_simulated !== null && params.is_simulated !== '') {
+      q.append('is_simulated', params.is_simulated);
+    }
+    const token = ApiClient.getToken();
+    if (token) q.append('token', token);
+    return `${API_BASE_URL}/reports/export/csv?${q.toString()}`;
+  },
+  getHtmlUrl: (params = {}) => {
+    const q = new URLSearchParams();
+    if (params.incident_id) q.append('incident_id', params.incident_id);
+    if (params.date_from) q.append('date_from', params.date_from);
+    if (params.date_to) q.append('date_to', params.date_to);
+    if (params.severity) q.append('severity', params.severity);
+    if (params.category) q.append('category', params.category);
+    if (params.status) q.append('status', params.status);
+    if (params.is_simulated !== undefined && params.is_simulated !== null && params.is_simulated !== '') {
+      q.append('is_simulated', params.is_simulated);
+    }
+    const token = ApiClient.getToken();
+    if (token) q.append('token', token);
+    return `${API_BASE_URL}/reports/export/html?${q.toString()}`;
+  },
+};
+

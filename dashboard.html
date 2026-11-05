@@ -8,7 +8,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="css/main.css">
+  <link rel="stylesheet" href="css/main.css?v=20261105">
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -60,6 +60,16 @@
             <line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/>
           </svg>
           <span class="topnav-label">Analytics</span>
+        </div>
+
+        <div class="topnav-item" id="nav-reports" onclick="navigate('reports')" role="button" tabindex="0" aria-label="Reports">
+          <svg class="topnav-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+            <line x1="16" y1="13" x2="8" y2="13"/>
+            <line x1="16" y1="17" x2="8" y2="17"/>
+          </svg>
+          <span class="topnav-label">Reports</span>
         </div>
 
         <div class="topnav-separator" aria-hidden="true"></div>
@@ -227,6 +237,15 @@
         </svg>
         Analytics
       </div>
+      <div class="topnav-mobile-item" id="mob-nav-reports" onclick="navigate('reports'); closeMobileNav();">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+          <polyline points="14 2 14 8 20 8"/>
+          <line x1="16" y1="13" x2="8" y2="13"/>
+          <line x1="16" y1="17" x2="8" y2="17"/>
+        </svg>
+        Reports
+      </div>
       <div class="topnav-mobile-item" id="mob-nav-chatbot" onclick="navigate('chatbot'); closeMobileNav();">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
           <path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/>
@@ -300,6 +319,9 @@
 
       <!-- PAGE: ANALYTICS -->
       <div class="page" id="page-analytics"></div>
+
+      <!-- PAGE: REPORTS -->
+      <div class="page" id="page-reports"></div>
 
       <!-- PAGE: ALERT GENERATOR -->
       <div class="page" id="page-alertgen"></div>
@@ -510,7 +532,7 @@
     }
   });
 </script>
-<script src="js/app.js"></script>
+<script src="js/app.js?v=20261105status"></script>
 <script>
   // Patch navigate to also sync mobile drawer active states
   const _appNavigate = navigate;
